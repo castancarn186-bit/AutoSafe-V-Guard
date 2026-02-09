@@ -1,3 +1,4 @@
+#统一协议定义	定义 RiskReport 数据类，确保全链路数据格式一致。
 from dataclasses import dataclass, field
 from typing import Dict, Any
 import time

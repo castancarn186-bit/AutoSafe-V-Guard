@@ -1,3 +1,49 @@
+#风险融合决策引擎	收集 A/B/C 的报告，执行加权算法，输出最终决策。
+import asyncio
+import random
+from typing import List
+from core.protocol import RiskReport
+
+
+class VGuardEngine:
+    def __init__(self):
+        # 定义每个模块的权重（加起来等于 1.0）
+        self.weights = {
+            "A": 0.4,  # 声学层关键
+            "B": 0.3,
+            "C": 0.3
+        }
+
+    async def run_fusion(self, reports: List[RiskReport]):
+        """
+        风险融合算法：加权求和
+        """
+        total_risk = 0.0
+        for r in reports:
+            weight = self.weights.get(r.module_id, 0.1)
+            total_risk += r.risk_score * weight
+
+        # 决策逻辑
+        if total_risk > 0.7:
+            decision = "BLOCK (拦截)"
+        elif total_risk > 0.4:
+            decision = "WARN (二次确认)"
+        else:
+            decision = "PASS (放行)"
+
+        return total_risk, decision
+
+    def generate_mock_reports(self) -> List[RiskReport]:
+        """
+        Mock 机制,模拟 1/2/3 三部分输出
+        test
+        """
+        return [
+            RiskReport(module_id="A", risk_score=random.uniform(0, 1), suggestion="MOCK"),
+            RiskReport(module_id="B", risk_score=random.uniform(0, 1), suggestion="MOCK"),
+            RiskReport(module_id="C", risk_score=random.uniform(0, 1), suggestion="MOCK")
+        ]
+'''
 import asyncio
 from typing import List
 from core.protocol import RiskReport
@@ -43,3 +89,4 @@ class VGuardEngine:
             "total_risk": round(total_risk, 2),
             "breakdown": [r.to_dict() for r in reports]
         }
+'''

@@ -1,0 +1,6 @@
+asyncio
+flet
+pydantic
+numpy
+librosa
+onnxruntime
