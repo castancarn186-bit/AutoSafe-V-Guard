@@ -172,7 +172,11 @@ async def main_ui(page: ft.Page):
                 for r in shared_state.latest_reports:
                     target = card_a if r.module_id == "A" else card_b if r.module_id == "B" else card_c
                     target.content.controls[1].value = r.risk_score
-                    target.content.controls[2].value = f"原因: {r.evidence.get('reason', '正常')}"
+                    # 直接读取 r.reason，因为它是 RiskReport 的直接属性
+                    target.content.controls[2].value = f"原因: {r.reason}"
+                    # 同时更新进度条颜色
+                    target.content.controls[1].value = r.risk_score
+                    target.content.controls[1].color = ACCENT_RED if r.risk_score > 0.6 else ACCENT_GREEN
 
             page.update()
             await asyncio.sleep(0.5)

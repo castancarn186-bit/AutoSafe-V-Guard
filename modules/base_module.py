@@ -4,7 +4,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Tuple, Dict
 
-# !!! 关键点：从 protocol 导入数据定义
+#从 protocol 导入数据定义
 from core.protocol import SystemContext, RiskReport, DecisionType
 
 

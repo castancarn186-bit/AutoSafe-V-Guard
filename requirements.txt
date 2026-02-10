@@ -1,6 +1,14 @@
-asyncio
-flet
-pydantic
-numpy
-librosa
-onnxruntime
+# 前端UI框架
+flet>=0.21.0
+# 数据验证与结构
+pydantic>=2.5.0
+# 科学计算
+numpy>=1.24.0
+# 音频信号处理
+# 提取梅尔频谱、检测声学特征
+librosa>=0.10.1
+soundfile>=0.12.1
+# AI推理引擎
+onnxruntime>=1.16.0
+# 打包工具
+pyinstaller>=6.3.0
