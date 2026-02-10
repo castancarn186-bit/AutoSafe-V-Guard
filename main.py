@@ -2,7 +2,6 @@ import flet as ft
 from ui.app import main_ui
 
 if __name__ == "__main__":
-    # 唯一入口，不要在这里写任何逻辑，全部交给 main_ui
     ft.app(target=main_ui)
 '''
 import flet as ft
