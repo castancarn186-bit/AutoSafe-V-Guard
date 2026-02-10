@@ -14,7 +14,7 @@ V-Guard/
 │   ├── base_module.py      # 模块基类（BaseDetector），强制规范行为
 │   ├── state.py            # 全局共享状态机（State Hub），连接UI与后台
 │   ├── engine.py           # 风险融合引擎（Fusion Engine），负责加权决策
-│   └── simulator.py        # 上帝模式模拟器，用于演示攻击场景
+│   └── simulator.py        # 模拟器，演示攻击场景
 ├── modules/                # 具体防御模块
 │   ├── module_a_acoustic/  # 声学物理层（继承 BaseDetector）
 │   │   └── detector.py
