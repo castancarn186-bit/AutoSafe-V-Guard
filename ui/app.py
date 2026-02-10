@@ -2,6 +2,642 @@ import flet as ft
 import asyncio
 from datetime import datetime
 from core.state import shared_state
+from core.engine import VGuardEngine
+
+
+# 辅助函数：生成透明颜色
+def get_alpha_color(color_hex, opacity):
+    try:
+        alpha = int(opacity * 255)
+        return f"#{alpha:02x}{color_hex.lstrip('#')}"
+    except:
+        return color_hex
+
+
+async def main_ui(page: ft.Page):
+    # --- 1. 后台引擎任务 (生产数据) ---
+    async def detection_engine_task():
+        engine = VGuardEngine()
+        print("[System] 后台安全决策引擎激活")
+        while shared_state.is_running:
+            reports = engine.generate_mock_reports()
+            total_risk, decision = await engine.run_fusion(reports)
+            # 同步到状态机
+            shared_state.latest_reports = reports
+            shared_state.total_risk = total_risk
+            shared_state.decision = decision
+            await asyncio.sleep(0.8)
+
+    # --- 2. 页面配置 ---
+    page.title = "V-Guard Pro | 智能座舱安全防御总控"
+    page.bgcolor = "#000000"
+    page.theme_mode = ft.ThemeMode.DARK
+    page.window_width = 1300
+    page.window_height = 900
+
+    ACCENT_CYAN = "#40c4ff"
+    ACCENT_RED = "#ff3b30"
+    ACCENT_GREEN = "#34c759"
+    ACCENT_AMBER = "#ff9500"
+    TEXT_SUBTLE = "#8e8e93"
+
+    # --- 3. UI 控件初始化 (确保引用正确) ---
+    risk_ring = ft.ProgressRing(width=210, height=210, stroke_width=16, value=0, color=ACCENT_CYAN)
+    risk_val = ft.Text("0%", size=54, weight="900")
+
+    # 重点：初始化时确保有字，不要显示空
+    asr_display = ft.Text("等待系统唤醒...", size=22, weight="bold")
+    speed_display = ft.Text("0 km/h", size=24, weight="bold")
+    weather_display = ft.Text("晴朗", size=24, weight="bold")
+
+    def create_card(title, color):
+        return ft.Container(
+            expand=True, bgcolor="#1c1c1e", padding=15, border_radius=15,
+            content=ft.Column([
+                ft.Row([ft.Icon(ft.Icons.SHIELD, color=color, size=18), ft.Text(title, size=14, weight="bold")]),
+                ft.ProgressBar(value=0, color=color, bgcolor="#000000", height=8),
+                ft.Text("系统监控中", size=11, color=TEXT_SUBTLE)
+            ])
+        )
+
+    card_a = create_card("声学物理层探测", ACCENT_AMBER)
+    card_b = create_card("ASR 模型行为分析", ACCENT_CYAN)
+    card_c = create_card("语义与状态校验", ACCENT_GREEN)
+
+    log_list = ft.ListView(expand=True, spacing=10, auto_scroll=True)
+
+    # --- 4. 键盘监听 (解决“在哪按”的问题) ---
+    def on_keyboard(e: ft.KeyboardEvent):
+        # 调试信息：会在你的 PyCharm 终端打印，看到它说明按键成功了
+        print(f"收到按键指令: {e.key}")
+
+        if e.key == "H":  # 模拟高速场景
+            shared_state.vehicle_speed = 120
+            shared_state.asr_text = "确认开启自动驾驶模式"
+            shared_state.weather = "晴天"
+            shared_state.intent_label = "动力请求"
+        elif e.key == "P":  # 模拟停车场景
+            shared_state.vehicle_speed = 0
+            shared_state.asr_text = "请打开后备箱"
+            shared_state.weather = "多云"
+            shared_state.intent_label = "设备执行"
+        elif e.key == "W":  # 模拟暴雨场景
+            shared_state.vehicle_speed = 40
+            shared_state.asr_text = "关闭感应雨刮器"
+            shared_state.weather = "暴雨"
+            shared_state.intent_label = "安全冲突"
+        elif e.key=="S":
+            shared_state.vehicle_speed=30
+            shared_state.asr_text="加速"
+            shared_state.weather="暴雪"
+            shared_state.intent_label="安全冲突"
+
+        # 立即强制刷新文字控件，不等循环
+        asr_display.value = shared_state.asr_text
+        speed_display.value = f"{shared_state.vehicle_speed} km/h"
+        weather_display.value = shared_state.weather
+        page.update()
+
+    page.on_keyboard_event = on_keyboard
+
+    # --- 5. 布局组装 ---
+    page.add(
+        ft.Row([
+            ft.Icon(ft.Icons.SHIELD_MOON, color=ACCENT_CYAN),
+            ft.Text("V-GUARD PRO MONITOR", size=20, weight="900"),
+            ft.Container(expand=True),
+            ft.Text("请点击窗口后按 S/W/P/H 键", size=12, color=ACCENT_CYAN, weight="bold")
+        ]),
+        ft.Container(height=20),
+        ft.Row([
+            # 左侧：风险仪表盘
+            ft.Container(
+                expand=3, bgcolor="#111112", padding=30, border_radius=25,
+                content=ft.Column([
+                    ft.Stack([risk_ring, ft.Container(risk_val, alignment=ft.Alignment(0, 0), width=210, height=210)]),
+                    ft.Container(height=20),
+                    ft.Row([card_a, card_b, card_c], spacing=15)
+                ], horizontal_alignment="center")
+            ),
+            # 右侧：实时看板与日志流
+            ft.Column([
+                ft.Container(
+                    content=ft.Column([
+                        ft.Text("当前语音识别结果", size=12, color=TEXT_SUBTLE),
+                        asr_display,
+                        ft.Divider(color="#2c2c2e"),
+                        ft.Row([
+                            ft.Column([ft.Text("实时车速", size=12, color=TEXT_SUBTLE), speed_display]),
+                            ft.Container(width=40),
+                            ft.Column([ft.Text("天气环境", size=12, color=TEXT_SUBTLE), weather_display]),
+                        ])
+                    ]),
+                    bgcolor="#111112", padding=20, border_radius=20, width=400
+                ),
+                ft.Container(
+                    expand=True, bgcolor="#111112", padding=20, border_radius=20, width=400,
+                    content=ft.Column([
+                        ft.Text("📜 安全决策日志流", size=14, weight="bold", color=ACCENT_CYAN),
+                        log_list
+                    ])
+                )
+            ], expand=2, spacing=15)
+        ], expand=True)
+    )
+
+    # --- 6. UI 实时刷新循环 (同步所有数据) ---
+    async def refresh_task():
+        while True:
+            # 同步圆环数值
+            total = shared_state.total_risk
+            risk_ring.value = total
+            risk_ring.color = ACCENT_RED if total > 0.6 else ACCENT_AMBER if total > 0.3 else ACCENT_CYAN
+            risk_val.value = f"{int(total * 100)}%"
+
+            # 同步看板文字 (确保万无一失)
+            asr_display.value = shared_state.asr_text
+            speed_display.value = f"{shared_state.vehicle_speed} km/h"
+            weather_display.value = shared_state.weather
+
+            # 处理日志
+            if shared_state.latest_reports:
+                ts = datetime.now().strftime("%H:%M:%S")
+                log_list.controls.insert(0, ft.Text(
+                    f"[{ts}] {shared_state.decision} | 风险分: {total:.2f}",
+                    color=risk_ring.color, size=12, weight="bold"
+                ))
+                if len(log_list.controls) > 15: log_list.controls.pop()
+
+                # 更新 A/B/C 卡片
+                for r in shared_state.latest_reports:
+                    target = card_a if r.module_id == "A" else card_b if r.module_id == "B" else card_c
+                    target.content.controls[1].value = r.risk_score
+                    target.content.controls[2].value = f"原因: {r.evidence.get('reason', '正常')}"
+
+            page.update()
+            await asyncio.sleep(0.5)
+
+    # --- 7. 启动所有异步后台任务 ---
+    page.run_task(detection_engine_task)  # 启动算法引擎
+    page.run_task(refresh_task)  # 启动 UI 刷新
+'''
+#字段显示不全
+import flet as ft
+import asyncio
+from datetime import datetime
+from core.state import shared_state
+from core.engine import VGuardEngine
+
+
+# 辅助函数：生成透明颜色
+def get_alpha_color(color_hex, opacity):
+    try:
+        alpha = int(opacity * 255)
+        return f"#{alpha:02x}{color_hex.lstrip('#')}"
+    except:
+        return color_hex
+
+
+async def main_ui(page: ft.Page):
+    # --- 1. 后台引擎任务 (生产者) ---
+    async def detection_engine_task():
+        engine = VGuardEngine()
+        print("🧠 [System] 后台安全决策引擎已激活...")
+        while shared_state.is_running:
+            # 获取 A/B/C 的模拟/真实报告
+            reports = engine.generate_mock_reports()
+            # 融合计算总风险
+            total_risk, decision = await engine.run_fusion(reports)
+
+            # 更新全局状态机
+            shared_state.latest_reports = reports
+            shared_state.total_risk = total_risk
+            shared_state.decision = decision
+            await asyncio.sleep(0.8)  # 略低于UI刷新频率，保证数据新鲜
+
+    # --- 2. 页面配置与常量 ---
+    page.title = "V-Guard Pro | 智能座舱安全防御总控"
+    page.bgcolor = "#000000"
+    page.window_width = 1300
+    page.window_height = 900
+
+    ACCENT_CYAN = "#40c4ff"
+    ACCENT_RED = "#ff3b30"
+    ACCENT_GREEN = "#34c759"
+    ACCENT_AMBER = "#ff9500"
+    TEXT_SUBTLE = "#8e8e93"
+
+    # --- 3. UI 组件初始化 ---
+    # 风险环尺寸调整为 210 以防止超出
+    risk_ring = ft.ProgressRing(width=210, height=210, stroke_width=16, value=0, color=ACCENT_CYAN)
+    risk_val = ft.Text("0%", size=54, weight="900")
+
+    # 实时看板数据
+    asr_text = ft.Text(shared_state.asr_text, size=22, weight="bold")
+    speed_text = ft.Text("0 km/h", size=24, weight="bold")
+    weather_text = ft.Text("晴天", size=24, weight="bold")
+
+    def create_card(title, color):
+        return ft.Container(
+            expand=True, bgcolor="#1c1c1e", padding=15, border_radius=15,
+            content=ft.Column([
+                ft.Row([ft.Icon(ft.Icons.SHIELD, color=color, size=18), ft.Text(title, size=14, weight="bold")]),
+                ft.ProgressBar(value=0, color=color, bgcolor="#000000", height=8),
+                ft.Text("监控中...", size=11, color=TEXT_SUBTLE)
+            ])
+        )
+
+    card_a = create_card("声学探测", ACCENT_AMBER)
+    card_b = create_card("ASR行为", ACCENT_CYAN)
+    card_c = create_card("语义校验", ACCENT_GREEN)
+
+    # 决策日志列表
+    log_list = ft.ListView(expand=True, spacing=10, auto_scroll=True)
+
+    # --- 4. 键盘监听 (场景模拟器) ---
+    def on_keyboard(e: ft.KeyboardEvent):
+        if e.key == "S":  # 模拟高速
+            shared_state.vehicle_speed = 120
+            shared_state.asr_text = "确认开启自动驾驶"
+            shared_state.intent_label = "动力控制"
+        elif e.key == "P":  # 模拟停车
+            shared_state.vehicle_speed = 0
+            shared_state.asr_text = "打开后备箱"
+            shared_state.intent_label = "设备执行"
+        elif e.key == "W":  # 模拟暴雨
+            shared_state.weather = "暴雨"
+            shared_state.asr_text = "关闭所有雨刮器"
+        page.update()
+
+    page.on_keyboard_event = on_keyboard
+
+    # --- 5. 布局组装 ---
+    page.add(
+        ft.Row([
+            ft.Icon(ft.Icons.SHIELD_MOON, color=ACCENT_CYAN),
+            ft.Text("V-GUARD PRO MONITOR", size=20, weight="900"),
+            ft.Container(expand=True),
+            ft.Text("上帝模式: 按 S/W/P 键切换场景", size=12, color=TEXT_SUBTLE)
+        ]),
+        ft.Container(height=20),
+        ft.Row([
+            # 左：风险评估仪表盘
+            ft.Container(
+                expand=3, bgcolor="#111112", padding=30, border_radius=25,
+                content=ft.Column([
+                    ft.Stack([risk_ring, ft.Container(risk_val, alignment=ft.Alignment(0, 0), width=210, height=210)]),
+                    ft.Container(height=20),
+                    ft.Row([card_a, card_b, card_c], spacing=15)
+                ], horizontal_alignment="center")
+            ),
+            # 右：实时数据看板
+            ft.Column([
+                ft.Container(
+                    content=ft.Column([
+                        ft.Text("当前语音识别结果", size=12, color=TEXT_SUBTLE),
+                        asr_text,
+                        ft.Divider(color="#2c2c2e"),
+                        ft.Row([
+                            ft.Column([ft.Text("实时车速", size=12, color=TEXT_SUBTLE), speed_text]),
+                            ft.Container(width=40),
+                            ft.Column([ft.Text("天气环境", size=12, color=TEXT_SUBTLE), weather_text]),
+                        ])
+                    ]),
+                    bgcolor="#111112", padding=20, border_radius=20, width=400
+                ),
+                # 修复后的日志流区
+                ft.Container(
+                    expand=True, bgcolor="#111112", padding=20, border_radius=20, width=400,
+                    content=ft.Column([
+                        ft.Text("📜 安全决策日志流", size=14, weight="bold", color=ACCENT_CYAN),
+                        log_list  # 日志被放在 expand 的容器中，确保可见
+                    ])
+                )
+            ], expand=2, spacing=15)
+        ], expand=True)
+    )
+
+    # --- 6. UI 刷新任务 (消费者) ---
+    async def refresh_task():
+        while True:
+            # 从全局状态同步数据到 UI 控件
+            total = shared_state.total_risk
+            risk_ring.value = total
+            risk_ring.color = ACCENT_RED if total > 0.6 else ACCENT_AMBER if total > 0.3 else ACCENT_CYAN
+            risk_val.value = f"{int(total * 100)}%"
+
+            speed_text.value = f"{shared_state.vehicle_speed} km/h"
+            weather_text.value = shared_state.weather
+            asr_text.value = shared_state.asr_text
+
+            if shared_state.latest_reports:
+                # 实时插入决策日志
+                ts = datetime.now().strftime("%H:%M:%S")
+                log_list.controls.insert(0, ft.Text(
+                    f"[{ts}] {shared_state.decision} | Risk: {total:.2f}",
+                    color=risk_ring.color, size=12, weight="bold"
+                ))
+                if len(log_list.controls) > 20: log_list.controls.pop()
+
+                # 更新 A/B/C 子卡片
+                for r in shared_state.latest_reports:
+                    target = card_a if r.module_id == "A" else card_b if r.module_id == "B" else card_c
+                    target.content.controls[1].value = r.risk_score
+                    target.content.controls[2].value = f"原因: {r.evidence.get('reason', '正常')}"
+
+            page.update()
+            await asyncio.sleep(0.5)
+
+    # --- 7. 启动所有异步后台任务 ---
+    page.run_task(detection_engine_task)  # 启动引擎
+    page.run_task(refresh_task)  # 启动 UI 刷新
+'''
+'''
+#多功能无显示
+import flet as ft
+import asyncio
+from datetime import datetime
+from core.state import shared_state
+
+
+# 自定义透明色函数
+def get_alpha_color(color_hex, opacity):
+    try:
+        alpha = int(opacity * 255)
+        return f"#{alpha:02x}{color_hex.lstrip('#')}"
+    except:
+        return color_hex
+
+
+async def main_ui(page: ft.Page):
+    # 配置
+    page.title = "V-Guard Pro | 智能座舱防御总控"
+    page.bgcolor = "#000000"
+    page.window_width = 1300
+    page.window_height = 900
+
+    # 常量
+    ACCENT_CYAN = "#40c4ff"
+    ACCENT_RED = "#ff3b30"
+    ACCENT_GREEN = "#34c759"
+    ACCENT_AMBER = "#ff9500"
+
+    # --- UI 组件定义 ---
+    # 1. 核心看板数据
+    asr_text = ft.Text(shared_state.asr_text, size=22, weight="bold")
+    speed_text = ft.Text("0 km/h", size=24, weight="bold")
+    weather_text = ft.Text("晴天", size=24, weight="bold")
+
+    # 2. 风险环
+    risk_ring = ft.ProgressRing(width=210, height=210, stroke_width=16, value=0, color=ACCENT_CYAN)
+    risk_val = ft.Text("0%", size=54, weight="900")
+
+    # 3. 模块卡片
+    def create_card(title, color):
+        return ft.Container(
+            expand=True, bgcolor="#1c1c1e", padding=15, border_radius=15,
+            content=ft.Column([
+                ft.Row([ft.Icon(ft.Icons.SHIELD, color=color, size=18), ft.Text(title, size=14, weight="bold")]),
+                ft.ProgressBar(value=0, color=color, bgcolor="#000000", height=8),
+                ft.Text("正常", size=11, color="#8e8e93")
+            ])
+        )
+
+    card_a, card_b, card_c = create_card("声学探测", ACCENT_AMBER), create_card("ASR行为", ACCENT_CYAN), create_card(
+        "语义校验", ACCENT_GREEN)
+
+    # 4. 【修复重点】日志区域
+    log_list = ft.ListView(expand=True, spacing=10, auto_scroll=True)
+
+    # --- 布局组装 ---
+    page.add(
+        # Header
+        ft.Row([
+            ft.Icon(ft.Icons.SHIELD_MOON, color=ACCENT_CYAN, size=28),
+            ft.Text("V-GUARD PRO MONITOR", size=20, weight="900"),
+            ft.Container(expand=True),
+            ft.Text("按 S/W/P 切换场景", size=12, color="#8e8e93")
+        ]),
+        ft.Container(height=20),
+        # Main Area
+        ft.Row([
+            # 左：风险评估
+            ft.Container(
+                expand=3, bgcolor="#111112", padding=30, border_radius=25,
+                content=ft.Column([
+                    ft.Stack([risk_ring, ft.Container(risk_val, alignment=ft.Alignment(0, 0), width=210, height=210)]),
+                    ft.Container(height=20),
+                    ft.Row([card_a, card_b, card_c], spacing=15)
+                ], horizontal_alignment="center")
+            ),
+            # 右：实时数据看板
+            ft.Column([
+                ft.Container(
+                    content=ft.Column([
+                        ft.Text("当前语音识别结果", size=12, color="#8e8e93"),
+                        asr_text,
+                        ft.Divider(color="#2c2c2e", height=20),
+                        ft.Row([
+                            ft.Column([ft.Text("实时车速", size=12, color="#8e8e93"), speed_text]),
+                            ft.VerticalDivider(width=20),
+                            ft.Column([ft.Text("天气环境", size=12, color="#8e8e93"), weather_text]),
+                        ])
+                    ]),
+                    bgcolor="#111112", padding=20, border_radius=20, width=400
+                ),
+                # 决策日志容器 (修复显示)
+                ft.Container(
+                    content=ft.Column([
+                        ft.Text("📜 安全决策日志流", size=14, weight="bold", color=ACCENT_CYAN),
+                        ft.Container(log_list, expand=True)  # 嵌套 ListView
+                    ]),
+                    bgcolor="#111112", padding=20, border_radius=20, expand=True, width=400
+                )
+            ], expand=2, spacing=15)
+        ], expand=True)
+    )
+
+    # --- 刷新循环 ---
+    while True:
+        # 更新风险
+        total = shared_state.total_risk
+        risk_ring.value = total
+        risk_ring.color = ACCENT_RED if total > 0.6 else ACCENT_AMBER if total > 0.3 else ACCENT_CYAN
+        risk_val.value = f"{int(total * 100)}%"
+
+        # 更新环境看板
+        speed_text.value = f"{shared_state.vehicle_speed} km/h"
+        weather_text.value = shared_state.weather
+        asr_text.value = shared_state.asr_text
+
+        # 更新日志流
+        if shared_state.latest_reports:
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            log_list.controls.insert(0, ft.Text(
+                f"[{timestamp}] 决策: {shared_state.decision} | 风险分: {total:.2f}",
+                size=12, color=risk_ring.color, weight="bold"
+            ))
+            if len(log_list.controls) > 20: log_list.controls.pop()
+
+            # 更新子模块卡片
+            for r in shared_state.latest_reports:
+                card = card_a if r.module_id == "A" else card_b if r.module_id == "B" else card_c
+                card.content.controls[1].value = r.risk_score
+                card.content.controls[2].value = f"原因: {r.evidence.get('reason', '正常')}"
+
+        page.update()
+        await asyncio.sleep(1)
+'''
+'''
+import flet as ft
+import asyncio
+from datetime import datetime
+from core.state import shared_state
+
+
+async def main_ui(page: ft.Page):
+    from main import detection_engine_task
+    page.run_task(detection_engine_task)
+
+    page.title = "V-Guard Pro | 智能座舱全态势感知"
+    page.theme_mode = ft.ThemeMode.DARK
+    page.bgcolor = "#000000"
+    page.window_width = 1400  # 宽度加宽，更舒展
+    page.window_height = 900
+    page.padding = 30
+
+    # 颜色与辅助函数
+    def get_alpha(c, o):
+        return f"#{int(o * 255):02x}{c.lstrip('#')}"
+
+    ACCENT_CYAN = "#40c4ff"
+    ACCENT_AMBER = "#ff9500"
+    ACCENT_RED = "#ff3b30"
+    ACCENT_GREEN = "#34c759"
+
+    # --- UI 组件定义 ---
+
+    # 1. 实时语音与意图看板
+    asr_display = ft.Text(shared_state.asr_text, size=24, weight="bold", color="white")
+    intent_display = ft.Text(shared_state.intent_label, size=18, color=ACCENT_CYAN, weight="bold")
+
+    # 2. 车辆环境看板组件
+    def create_stat_box(label, value, icon):
+        return ft.Container(
+            content=ft.Column([
+                ft.Row([ft.Icon(icon, size=16, color="#8e8e93"), ft.Text(label, size=12, color="#8e8e93")]),
+                ft.Text(value, size=24, weight="bold", color="white")
+            ], spacing=5),
+            expand=True, bgcolor="#1c1c1e", padding=15, border_radius=15
+        )
+
+    speed_box = create_stat_box("当前车速", "0 km/h", ft.Icons.SPEED)
+    weather_box = create_stat_box("天气环境", "晴天", ft.Icons.CLOUD)
+    exec_box = create_stat_box("执行结果", "待机", ft.Icons.SETTINGS_INPUT_COMPONENT)
+
+    # 3. 核心风险圆环
+    risk_ring = ft.ProgressRing(width=220, height=220, stroke_width=18, value=0, color=ACCENT_CYAN)
+    risk_text = ft.Text("0%", size=54, weight="900")
+
+    # 4. 模块卡片 (A/B/C)
+    def create_module_card(title, color):
+        return ft.Container(
+            expand=True, bgcolor="#1c1c1e", padding=20, border_radius=20,
+            content=ft.Column([
+                ft.Row([ft.Icon(ft.Icons.SHIELD, color=color, size=20), ft.Text(title, weight="bold")]),
+                ft.ProgressBar(value=0, color=color, bgcolor="#000000", height=8),
+                ft.Text("原因: 正常", size=11, color="#8e8e93")
+            ])
+        )
+
+    card_a = create_module_card("物理声学探测", ACCENT_AMBER)
+    card_b = create_module_card("ASR 行为分析", ACCENT_CYAN)
+    card_c = create_module_card("语义意图校验", ACCENT_GREEN)
+
+    # --- 布局组装 ---
+    page.add(
+        # Top Header
+        ft.Row([
+            ft.Icon(ft.Icons.SHIELD_MOON, color=ACCENT_CYAN, size=30),
+            ft.Text("V-GUARD PRO", size=24, weight="900"),
+            ft.Container(expand=True),
+            ft.Text(datetime.now().strftime("%H:%M"), size=16, color="#8e8e93")
+        ]),
+        ft.Divider(height=40, color="transparent"),
+
+        # Middle: Dashboard & Status
+        ft.Row([
+            # 左侧：风险仪表盘
+            ft.Container(
+                expand=4, bgcolor="#111112", padding=40, border_radius=30,
+                content=ft.Column([
+                    ft.Text("实时安全态势指数", color="#8e8e93"),
+                    ft.Stack([
+                        risk_ring,
+                        ft.Container(risk_text, alignment=ft.Alignment(0, 0), width=220, height=220)
+                    ]),
+                    ft.Container(height=20),
+                    ft.Row([card_a, card_b, card_c], spacing=20)
+                ], horizontal_alignment="center")
+            ),
+            # 右侧：实时数据流
+            ft.Column([
+                # 语音识别区
+                ft.Container(
+                    content=ft.Column([
+                        ft.Text("实时语音识别 (ASR)", size=12, color="#8e8e93"),
+                        asr_display,
+                        ft.Divider(color="#2c2c2e"),
+                        ft.Text("提取语义意图 (Intent)", size=12, color="#8e8e93"),
+                        intent_display,
+                    ]),
+                    bgcolor="#111112", padding=25, border_radius=25, width=400
+                ),
+                # 环境状态区
+                ft.Row([speed_box, weather_box], width=400),
+                exec_box
+            ], expand=2, spacing=20)
+        ], expand=True),
+
+        # Bottom: 日志流
+        ft.Container(height=20),
+        ft.Container(
+            content=ft.ListView(expand=True, spacing=5),
+            expand=1, bgcolor="#111112", padding=20, border_radius=20
+        )
+    )
+
+    # --- 刷新循环 ---
+    while True:
+        # 更新风险
+        total = shared_state.total_risk
+        risk_ring.value = total
+        risk_ring.color = ACCENT_RED if total > 0.6 else ACCENT_AMBER if total > 0.3 else ACCENT_CYAN
+        risk_text.value = f"{int(total * 100)}%"
+
+        # 更新环境数据
+        asr_display.value = shared_state.asr_text
+        intent_display.value = f"➡ {shared_state.intent_label}"
+        speed_box.content.controls[1].value = f"{shared_state.vehicle_speed} km/h"
+        weather_box.content.controls[1].value = shared_state.weather
+        exec_box.content.controls[1].value = shared_state.execution_result
+        exec_box.content.controls[1].color = ACCENT_RED if "拦截" in shared_state.execution_result else "white"
+
+        # 更新子卡片证据
+        if shared_state.latest_reports:
+            for r in shared_state.latest_reports:
+                card = card_a if r.module_id == "A" else card_b if r.module_id == "B" else card_c
+                card.content.controls[1].value = r.risk_score
+                card.content.controls[2].value = f"原因: {r.evidence.get('reason', '正常')}"
+
+        page.update()
+        await asyncio.sleep(0.5)
+'''
+'''
+import flet as ft
+import asyncio
+from datetime import datetime
+from core.state import shared_state
 
 
 # --- 0. 自定义颜色函数 ---
@@ -210,3 +846,4 @@ async def main_ui(page: ft.Page):
 
         page.update()
         await asyncio.sleep(1)
+'''
