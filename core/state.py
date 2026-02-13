@@ -9,10 +9,10 @@ class SystemState:
     def __init__(self):
         # --- 1. 基础控制 ---
         self.is_running = True
-
+        self.is_human_override = False
         # --- 2. 风险决策数据 (给 UI 的圆环和卡片用) ---
         self.total_risk = 0.0
-        self.decision = "INITIALIZING"
+        self.decision = "就绪"
         self.latest_reports = []
 
         # --- 3. 【新增】实时感知数据 (展示在右侧数据流看板) ---
@@ -31,6 +31,11 @@ class SystemState:
         self.turn_signal = "OFF"  # 转向灯: OFF/LEFT/RIGHT
         self.brake_pressure = 0.0  # 刹车压力
 
+        # 性能遥测 (用于展示系统效率)
+        self.latencies = {"A": 0.0, "B": 0.0, "C": 0.0}
+
+        # 攻击注入状态 (用于演示)
+        self.active_attack = "none"
 
 # 实例化全局唯一变量
 shared_state = SystemState()

@@ -1,8 +1,25 @@
+# main.py
 import flet as ft
-from ui.app import main_ui
+import logging
+from ui.app import main_ui  # 确保这里只引用 app.py
+
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - [%(levelname)s] - %(name)s: %(message)s'
+)
+logger = logging.getLogger("VGuard.Main")
+
+def start_system():
+    logger.info("🚀 V-Guard 安全防御系统启动中...")
+    try:
+        # 启动新版的赛博朋克 UI [cite: 158]
+        ft.run(main_ui)
+    except Exception as e:
+        logger.error(f"系统运行崩溃: {e}")
 
 if __name__ == "__main__":
-    ft.app(target=main_ui)
+    start_system()
 '''
 import flet as ft
 import asyncio

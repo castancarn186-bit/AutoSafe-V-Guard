@@ -1,3 +1,282 @@
+# ui/app.py
+import flet as ft
+import asyncio
+from datetime import datetime
+from core.state import shared_state
+from core.engine import VGuardEngine
+
+# --- 赛博主题色 ---
+BG_COLOR = "#080c11"
+PANEL_BG = "#0d131a"
+BORDER_COLOR = "#1a2636"
+CYAN_GLOW = "#00f2ff"
+RED_GLOW = "#ff2a2a"
+ORANGE_GLOW = "#ffa500"
+GREEN_GLOW = "#34c759"
+TEXT_MUTED = "#647b91"
+
+
+def get_border(width, color):
+    side = ft.BorderSide(width, color)
+    return ft.Border(top=side, bottom=side, left=side, right=side)
+
+
+def create_glowing_panel(title, content, glow_color=CYAN_GLOW, expand=True):
+    return ft.Container(
+        expand=expand, padding=20, bgcolor=PANEL_BG, border_radius=15,
+        border=get_border(1, BORDER_COLOR),
+        shadow=ft.BoxShadow(spread_radius=0, blur_radius=10, color=f"{glow_color}40", offset=ft.Offset(0, 0)),
+        content=ft.Column([
+            ft.Text(title, size=14, weight="900", color="white"),
+            ft.Divider(height=1, color=BORDER_COLOR),
+            content
+        ])
+    )
+
+
+async def main_ui(page: ft.Page):
+    # ==========================================
+    # 0. 挂载真实后台引擎 (已修复引擎调用方法)
+    # ==========================================
+    async def detection_engine_task():
+        engine = VGuardEngine()
+        print("🧠 [System] 后台安全决策引擎已激活...")
+        while shared_state.is_running:
+            try:
+                # 你的真实引擎内部已经更新了 shared_state，直接调用 run_pipeline 即可 [cite: 2, 4]
+                await engine.run_pipeline()
+            except Exception as e:
+                print(f"引擎运行错误: {e}")
+            await asyncio.sleep(0.8)
+
+    # ==========================================
+    # 1. 页面配置
+    # ==========================================
+    page.title = "V-Guard Pro | 智能座舱防御总控"
+    page.bgcolor = BG_COLOR
+    page.padding = 20
+    page.window_width = 1440
+    page.window_height = 850
+    page.theme_mode = ft.ThemeMode.DARK
+
+    # ==========================================
+    # 2. 交互控制事件
+    # ==========================================
+    def update_speed(e):
+        val = int(e.control.value)
+        shared_state.vehicle_speed = val
+        speed_text.value = str(val)
+        speed_ring.value = min(val / 200.0, 1.0)
+        page.update()
+
+    def update_weather(e):
+        shared_state.weather = e.control.value
+        weather_text.value = f"环境: {e.control.value}"
+        page.update()
+
+    def submit_asr(e):
+        if asr_input.value:
+            shared_state.asr_text = asr_input.value
+            page.update()
+
+    def trigger_scenario(speed, weather, text):
+        shared_state.vehicle_speed = speed
+        shared_state.weather = weather
+        shared_state.asr_text = text
+
+        speed_slider.value = speed
+        speed_text.value = str(speed)
+        speed_ring.value = min(speed / 200.0, 1.0)
+        weather_dropdown.value = weather
+        weather_text.value = f"环境: {weather}"
+        asr_input.value = text
+        page.update()
+
+    # ==========================================
+    # 3. UI 控件搭建
+    # ==========================================
+
+    # --- 左侧：环境与车控模拟 ---
+    speed_text = ft.Text(str(shared_state.vehicle_speed), size=60, weight="900", color="white")
+    speed_ring = ft.ProgressRing(width=250, height=250, stroke_width=15, value=0.0, color=CYAN_GLOW,
+                                 bgcolor=BORDER_COLOR)
+    weather_text = ft.Text(f"环境: {shared_state.weather}", size=14, color=GREEN_GLOW, weight="bold")
+
+    speedometer = ft.Stack([
+        speed_ring,
+        ft.Container(
+            content=ft.Column([
+                speed_text, ft.Text("km/h", size=16, color=TEXT_MUTED, weight="bold"),
+                ft.Text("D", size=24, color=CYAN_GLOW, weight="900"), weather_text
+            ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=0),
+            alignment=ft.Alignment(0, 0), width=250, height=250
+        )
+    ])
+
+    speed_slider = ft.Slider(min=0, max=200, divisions=40, value=shared_state.vehicle_speed, active_color=CYAN_GLOW,
+                             on_change=update_speed)
+
+    weather_dropdown = ft.Dropdown(
+        options=[
+            ft.DropdownOption("晴朗"),
+            ft.DropdownOption("多云"),
+            ft.DropdownOption("暴雨"),
+            ft.DropdownOption("暴雪")
+        ],
+        value=shared_state.weather, width=150, border_color=CYAN_GLOW, color="white",
+        on_select=update_weather
+    )
+
+    panel_left = create_glowing_panel("CONTEXT SIMULATOR", ft.Column([
+        ft.Container(height=10),
+        ft.Container(speedometer, alignment=ft.Alignment(0, 0)),
+        ft.Container(height=20),
+        ft.Text("SPEED CONTROL (车速)", size=12, weight="bold", color="white"),
+        speed_slider,
+        ft.Row([ft.Text("WEATHER (天气):", size=12, weight="bold", color="white"), weather_dropdown],
+               alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+    ]))
+
+    # --- 中侧：核心防御管线 ---
+    user_bubble_text = ft.Text("等待语音输入...", size=18, color="white")
+    # 修复 padding 弃用警告，直接使用基础数值
+    user_bubble = ft.Container(
+        content=user_bubble_text, padding=15,
+        border_radius=15, border=get_border(2, CYAN_GLOW), bgcolor="#00f2ff10"
+    )
+
+    system_icon = ft.Icon(ft.Icons.SHIELD, color=CYAN_GLOW, size=40)
+    system_title = ft.Text("● 监控中 (MONITOR)", size=22, weight="900", color=CYAN_GLOW)
+    system_reason = ft.Text("系统运行正常", size=16, color="white")
+
+    # 修复 padding 弃用警告，直接使用基础数值
+    system_bubble = ft.Container(
+        content=ft.Row([system_icon, ft.Column([system_title, system_reason], spacing=2)]),
+        padding=20, border_radius=15,
+        border=get_border(2, CYAN_GLOW), bgcolor="#00f2ff10"
+    )
+
+    def xray_box(title, icon_name):
+        val_text = ft.Text("Risk: 0.00", size=10, color=TEXT_MUTED)
+        box = ft.Container(
+            content=ft.Column([
+                ft.Icon(icon_name, color=CYAN_GLOW, size=30),
+                ft.Text(title, size=12, weight="bold", color="white"), val_text
+            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=15, border=get_border(1, CYAN_GLOW), border_radius=10, bgcolor=BORDER_COLOR
+        )
+        return box, val_text
+
+    box_a, xray_a_val = xray_box("Audio (声学)", ft.Icons.MULTILINE_CHART)
+    box_b, xray_b_val = xray_box("ASR (行为)", ft.Icons.SPEED)
+    box_c, xray_c_val = xray_box("Semantic (语义)", ft.Icons.RULE)
+
+    xray_row = ft.Container(
+        content=ft.Column([
+            ft.Text("X-RAY VIEW (透视探测器)", size=12, weight="bold", color="white"),
+            ft.Row([box_a, ft.Icon(ft.Icons.ARROW_FORWARD, color=CYAN_GLOW), box_b,
+                    ft.Icon(ft.Icons.ARROW_FORWARD, color=CYAN_GLOW), box_c], alignment=ft.MainAxisAlignment.CENTER)
+        ]), padding=15, border=get_border(1, BORDER_COLOR), border_radius=10
+    )
+
+    panel_mid = create_glowing_panel("V-GUARD DEFENSE PIPELINE", ft.Column([
+        ft.Container(height=20), user_bubble, ft.Container(height=40),
+        ft.Container(system_bubble, alignment=ft.Alignment(1, 0)), ft.Container(expand=True), xray_row
+    ]))
+
+    # --- 右侧：测试注入与预设场景 ---
+    asr_input = ft.TextField(label="模拟语音指令注入 (按回车发送)", expand=True, border_color=CYAN_GLOW, color="white",
+                             on_submit=submit_asr)
+    btn_send = ft.IconButton(icon=ft.Icons.SEND, icon_color=CYAN_GLOW, on_click=submit_asr)
+
+    def scenario_button(title, subtitle, color, speed, weather, text):
+        return ft.Container(
+            content=ft.Column(
+                [ft.Text(title, weight="bold", color=color), ft.Text(subtitle, size=10, color=TEXT_MUTED)], spacing=2),
+            padding=15, border=get_border(1, color), border_radius=8, bgcolor=f"{color}10",
+            on_click=lambda _: trigger_scenario(speed, weather, text), ink=True
+        )
+
+    log_list = ft.ListView(expand=True, spacing=5, auto_scroll=True)
+
+    panel_right = create_glowing_panel("ATTACK & TELEMETRY", ft.Column([
+        ft.Text("COMMAND INJECTION (手动测试)", size=12, weight="bold", color="white"),
+        ft.Row([asr_input, btn_send]),
+        ft.Divider(height=10, color=BORDER_COLOR),
+        ft.Text("PRESET SCENARIOS (一键演示)", size=12, weight="bold", color="white"),
+        scenario_button("🚗 高速越权危险", "120km/h + 开启后备箱", RED_GLOW, 120, "晴朗", "打开后备箱"),
+        ft.Container(height=5),
+        scenario_button("🌧️ 极端天气冲突", "40km/h + 暴雨 + 关雨刮", ORANGE_GLOW, 40, "暴雨", "关闭感应雨刮器"),
+        ft.Container(height=5),
+        scenario_button("🅿️ 停车合规放行", "0km/h + 开启后备箱", GREEN_GLOW, 0, "晴朗", "打开后备箱"),
+        ft.Divider(height=10, color=BORDER_COLOR),
+        ft.Text("📜 实时日志", size=12, weight="bold", color="white"),
+        ft.Container(log_list, expand=True)
+    ]))
+
+    page.add(
+        ft.Row([
+            ft.Icon(ft.Icons.SHIELD_MOON, color=CYAN_GLOW, size=28),
+            ft.Text("V-GUARD PRO", size=24, weight="900", color="white", italic=True),
+            ft.Container(expand=True),
+            ft.Text(datetime.now().strftime("%H:%M"), color=TEXT_MUTED, weight="bold")
+        ]),
+        ft.Container(height=10),
+        ft.Row([panel_left, panel_mid, panel_right], expand=True, spacing=20)
+    )
+
+    async def refresh_task():
+        while True:
+            total = shared_state.total_risk
+            decision = shared_state.decision
+
+            user_bubble_text.value = f"User: {shared_state.asr_text}"
+
+            if decision == "BLOCK":
+                state_color = RED_GLOW
+                system_title.value = f"● 拦截 (BLOCK) Risk: {total:.2f}"
+                system_bubble.bgcolor = "#ff2a2a15"
+            elif decision == "WARN":
+                state_color = ORANGE_GLOW
+                system_title.value = f"● 警告 (WARN) Risk: {total:.2f}"
+                system_bubble.bgcolor = "#ffa50015"
+            else:
+                state_color = GREEN_GLOW
+                system_title.value = f"● 放行 (PASS) Risk: {total:.2f}"
+                system_bubble.bgcolor = "#34c75915"
+
+            system_icon.color = state_color
+            system_title.color = state_color
+            system_bubble.border = get_border(2, state_color)
+
+            if shared_state.latest_reports:
+                for r in shared_state.latest_reports:
+                    if r.module_id == "A":
+                        xray_a_val.value = f"Risk: {r.risk_score:.2f}"
+                    elif r.module_id == "B":
+                        xray_b_val.value = f"Risk: {r.risk_score:.2f}"
+                    elif r.module_id == "C":
+                        xray_c_val.value = f"Risk: {r.risk_score:.2f}"
+                        # 确保提取出底层的拦截原因 [cite: 9, 30]
+                        system_reason.value = r.reason if decision != "PASS" else "指令合规，正在执行"
+
+                ts = datetime.now().strftime("%H:%M:%S")
+                log_list.controls.insert(0, ft.Text(
+                    f"[{ts}] {decision} | 综合风险: {total:.2f}",
+                    color=state_color, size=11, weight="bold"
+                ))
+                if len(log_list.controls) > 15: log_list.controls.pop()
+
+            page.update()
+            await asyncio.sleep(0.5)
+
+    page.run_task(detection_engine_task)
+    page.run_task(refresh_task)
+
+
+if __name__ == "__main__":
+    ft.run(main_ui)
+'''
 import flet as ft
 import asyncio
 from datetime import datetime
@@ -184,6 +463,7 @@ async def main_ui(page: ft.Page):
     # --- 7. 启动所有异步后台任务 ---
     page.run_task(detection_engine_task)  # 启动算法引擎
     page.run_task(refresh_task)  # 启动 UI 刷新
+'''
 '''
 #字段显示不全
 import flet as ft
