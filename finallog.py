@@ -4,13 +4,12 @@ import os
 
 def dump_project():
     # 1. 锁定当前运行位置
-    # 我们直接取脚本所在的文件夹，不再尝试“往上爬”
     root_dir = os.path.dirname(os.path.abspath(__file__))
 
     print(f"--- [V-Guard Sync Tool] ---")
     print(f"[Step 1] 当前定位目录: {root_dir}")
 
-    # 2. 检查关键文件夹是否存在（做个双重保险）
+    # 2. 检查关键文件夹是否存在
     target_dirs = ['core', 'ui', 'modules', 'hardware', 'data']
     found_any = False
     for d in target_dirs:
