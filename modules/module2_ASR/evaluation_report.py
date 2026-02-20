@@ -2,7 +2,8 @@
 """
 修复版的评估报告 - 使用正确的构造函数
 """
-
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 import numpy as np
 from datetime import datetime
 from asr_engine import create_asr_engine, create_test_audio

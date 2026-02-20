@@ -1,1 +1,0 @@
-#ASR 引擎适配器	调用 Whisper 或本地 ASR 引擎，并提取字级置信度 (Confidence)。

@@ -3,7 +3,25 @@
 ASR风险融合模块
 将置信度和稳定性合并为最终的风险分数
 """
+import os
+import sys
 
+# --- 关键修复：动态添加当前目录到搜索路径 ---
+# 这确保了无论从哪个目录启动，它都能找到同目录下的 confidence_analyzer
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.append(current_dir)
+
+# 修复 OpenMP DLL 冲突（双重保险）
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
+# 原有的 import 保持不变
+import time
+from typing import Dict, Any
+# 现在下面这两行就不会报错了
+from confidence_analyzer import ConfidenceMetrics, ConfidenceAnalyzer
+from stability_checker import StabilityMetrics, StabilityChecker
+from asr_engine import ASREngine
 import numpy as np
 from typing import Dict, Optional, Tuple, List
 from dataclasses import dataclass
@@ -18,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 class ASRRiskMetrics(BaseModel):
     """ASR风险指标"""
+    text:str=""
     confidence_score: float  # 置信度分数 [0,1]，1表示高置信度
     stability_score: float  # 稳定性分数 [0,1]，1表示高稳定性
     asr_risk_score: float  # ASR风险分数 [0,1]，1表示高风险
@@ -152,6 +171,7 @@ class ASRRiskModel:
 
             # 5. 构建结果
             metrics = ASRRiskMetrics(
+                text=asr_result.text,
                 confidence_score=confidence_score,
                 stability_score=stability_score,
                 asr_risk_score=asr_risk,

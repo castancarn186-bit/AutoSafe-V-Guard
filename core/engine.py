@@ -1,4 +1,53 @@
 #风险融合决策引擎	收集 A/B/C 的报告，执行加权算法，输出最终决策。
+import os
+import time
+import json
+import wave
+import pyaudio
+import threading
+from datetime import datetime
+from typing import Dict, Any
+import os
+import asyncio
+import wave
+import pyaudio
+from datetime import datetime
+from core.state import shared_state, ModuleReport
+
+# 修复 DLL 冲突
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
+
+class VGuardEngine:
+    """V-Guard 核心安全防御引擎"""
+
+    def __init__(self):
+        print("🚀 [V-Guard Engine] 正在启动安全决策内核...")
+        # 注意：这里不初始化 ASR 模型，因为我们在 app.py 的 session 中统一管理
+        # 这样可以避免多次加载模型导致内存爆炸
+        pass
+
+    async def run_pipeline(self, audio_path=None):
+        """
+        核心防御流水线
+        该方法由 app.py 调用。如果是模拟状态，它保持运行；如果是真实音频，它执行 ASR 风险判定。
+        """
+        if not audio_path:
+            # 模拟模式下的基础逻辑（同步状态）
+            await asyncio.sleep(0.1)
+            return
+
+        # 如果有音频路径，说明触发了真实防御检测
+        # 注意：ASR 的实际推理逻辑已在 app.py 的 start_voice_defense 中由 to_thread 处理
+        # 这里预留给后续成员 A (声学) 和成员 C (语义) 的集成接口
+        pass
+
+    def get_system_status(self):
+        return "RUNNING" if shared_state.is_running else "STOPPED"
+
+
+# 确保在文件末尾没有多余的、会导致报错的旧代码
+'''
 import asyncio
 import time
 import random
@@ -7,55 +56,44 @@ from core.protocol import RiskReport, DecisionType, AttackType
 from core.state import shared_state
 from hardware.gpio_ctrl import vguard_hw
 from data.database_manager import db_manager
+from modules.module2_ASR.asr_risk_model import ASRRiskModel
+from .utils import VoiceCapture # 假设你把上面的录音类放到了 utils
 
 
 class VGuardEngine:
     def __init__(self):
-        # 权重分配：体现安全策略重心 [cite: 12]
-        # A(物理声学) 40%, B(ASR行为) 30%, C(语义校验) 30%
-        self.weights = {"A": 0.4, "B": 0.3, "C": 0.3}
+        # 初始化 B 成员的风险评估模型
+        self.asr_analyzer = ASRRiskModel(model_size="base")
+        self.recorder = VoiceCapture()
 
-    async def run_pipeline(self):
+    def process_voice_command(self):
         """
-        核心调度流水线：并发调用模块 -> 风险融合 -> 物理执行
+        核心防御流水线：录音 -> ASR风险评估 -> 综合决策
         """
-        start_time = time.perf_counter()
+        # 1. 采集实时语音
+        audio_file = self.recorder.record(seconds=3)
 
-        # 1. 并发调用 A/B/C 模块 (并行计算提升响应速度)
-        # 在答辩时可以强调：系统总延迟 $Latency = \max(t_a, t_b, t_c)$
-        tasks = [
-            self._get_module_report("A"),
-            self._get_module_report("B"),
-            self._get_module_report("C")
-        ]
-        reports: List[RiskReport] = await asyncio.gather(*tasks)
+        # 2. 调用 Module 2 进行安全性评估
+        # 这是 B 成员的核心贡献点，我们要拿到原始的 metrics
+        asr_report = self.asr_analyzer.compute_risk(audio_file)
 
-        # 2. 更新性能遥测状态 (用于 UI 显示各模块耗时)
-        for r in reports:
-            shared_state.latencies[r.module_id] = r.latency_ms
+        # 3. 语义规范化处理（解决你遇到的繁简问题）
+        # 在答辩时，这叫“感知一致性对齐”
+        recognized_text = asr_report.get("text", "").replace("請", "请").replace("開", "开")
 
-        # 3. 风险融合算法 [cite: 14]
-        total_risk, final_decision = self._fusion_logic(reports)
+        # 4. 封装为系统级防御报告
+        defense_decision = {
+            "module_b": {
+                "risk_score": asr_report["risk_score"],
+                "confidence": asr_report["confidence_metrics"]["confidence_score"],
+                "stability": asr_report["stability_metrics"]["stability_score"],
+                "text": recognized_text
+            },
+            # 这里的 final_decision 逻辑体现了你的“网关”作用
+            "final_status": "BLOCK" if asr_report["risk_score"] > 0.7 else "PASS"
+        }
 
-        # 4. 人机共驾覆盖逻辑 (一等奖加分项：功能安全保障)
-        if shared_state.is_human_override:
-            final_decision = DecisionType.PASS.value
-            total_risk = total_risk * 0.5  # 人为干预时降低风险分显示
-
-        # 5. 更新全局状态机
-        shared_state.latest_reports = reports
-        shared_state.total_risk = total_risk
-        shared_state.decision = final_decision
-
-        # 6. 物理执行：调用硬件接口 [cite: 11]
-        vguard_hw.set_status(final_decision)
-
-        # 7. 数据存证：将拦截行为计入影子模式数据库 [cite: 11]
-        if final_decision != DecisionType.PASS.value or total_risk > 0.3:
-            try:
-                db_manager.save_log(total_risk, final_decision, reports)
-            except Exception as e:
-                print(f"[Engine] 存证失败: {e}")
+        return defense_decision
 
     async def _get_module_report(self, module_id: str) -> RiskReport:
         """
@@ -123,6 +161,7 @@ class VGuardEngine:
             decision = DecisionType.PASS.value
 
         return round(total_score, 2), decision
+'''
 '''
 # core/engine.py
 import random

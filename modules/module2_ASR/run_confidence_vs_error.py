@@ -3,7 +3,13 @@
 置信度 vs 错误率曲线
 使用test.wav的实际数据
 """
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
+# 接下来才是原来的代码，例如：
+# import time
+# from pathlib import Path
+# ...
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -40,7 +46,7 @@ class ConfidenceErrorAnalysis:
             audio, sr = librosa.load("test.wav", sr=16000, mono=True)
 
             # 参考文本（根据你之前的识别结果）
-            reference = "開同學 直到往"  # 你的test.wav识别结果
+            reference = "請打開空調"  # 你的test.wav识别结果
 
             # 执行ASR
             result = self.engine.transcribe(audio, sample_rate=sr)

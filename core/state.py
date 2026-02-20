@@ -1,41 +1,38 @@
 # core/state.py
 
-class SystemState:
-    """
-    全系统共享状态机 (升级版)
-    负责连接后台引擎、环境模拟器与前端 UI
-    """
+from dataclasses import dataclass, field
+from typing import List, Optional
 
-    def __init__(self):
-        # --- 1. 基础控制 ---
-        self.is_running = True
-        self.is_human_override = False
-        # --- 2. 风险决策数据 (给 UI 的圆环和卡片用) ---
-        self.total_risk = 0.0
-        self.decision = "就绪"
-        self.latest_reports = []
 
-        # --- 3. 【新增】实时感知数据 (展示在右侧数据流看板) ---
-        # 对应 ASR 识别结果
-        self.asr_text = "等待语音输入..."
-        # 对应成员 C 转换后的意图
-        self.intent_label = "无"
+@dataclass
+class ModuleReport:
+    """国家级竞赛标准：模块化风险报告结构"""
+    module_id: str  # "A", "B", 或 "C"
+    risk_score: float  # 0.0 ~ 1.0
+    status: str  # "PASS", "BLOCK", "WARN", "SAFE"
+    reason: str  # 拦截或放行的具体理由（可解释性核心）
 
-        # --- 4. 【新增】环境与车辆状态 (由你负责模拟) ---
-        self.vehicle_speed = 0  # 实时车速
-        self.weather = "晴天"  # 环境天气
-        self.execution_result = "待机"  # 实际执行结果 (拦截/放行)
 
-        # --- 5. 【新增】长尾指令扩展状态 ---
-        self.wipers_on = False  # 雨刮器状态
-        self.turn_signal = "OFF"  # 转向灯: OFF/LEFT/RIGHT
-        self.brake_pressure = 0.0  # 刹车压力
+@dataclass
+class SharedState:
+    """系统全局共享状态机"""
+    # 基础状态
+    is_running: bool = True
 
-        # 性能遥测 (用于展示系统效率)
-        self.latencies = {"A": 0.0, "B": 0.0, "C": 0.0}
+    # 环境状态
+    vehicle_speed: int = 0
+    weather: str = "晴朗"
 
-        # 攻击注入状态 (用于演示)
-        self.active_attack = "none"
+    # 语音状态
+    asr_text: str = "等待输入..."
 
-# 实例化全局唯一变量
-shared_state = SystemState()
+    # 核心决策数据
+    total_risk: float = 0.0
+    decision: str = "PASS"  # PASS, BLOCK, WARN
+
+    # 模块化报告列表 (UI 里的 X-RAY 视图数据源)
+    latest_reports: List[ModuleReport] = field(default_factory=list)
+
+
+# 全局单例
+shared_state = SharedState()

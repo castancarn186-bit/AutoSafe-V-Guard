@@ -2,6 +2,9 @@
 """
 运行置信度分布实验 - 使用真实音频
 """
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
 
 import numpy as np
 import matplotlib.pyplot as plt
