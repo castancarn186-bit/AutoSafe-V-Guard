@@ -64,6 +64,11 @@ class AcousticDetector(BaseDetector):
             # 1. 预处理（假设输入音频已经是16kHz，但如果ctx中有原始采样率信息，可以传入）
             # 目前ctx可能不包含采样率，假设与目标一致；若不一致需在配置中说明
             clean_audio = self.preprocessor.process(audio)
+            if self.anomaly_model.model_type == 'sklearn':
+                features = self.feature_extractor.extract(clean_audio)
+                raw_score = self.anomaly_model.predict_risk(features)
+            else:  # pytorch
+                raw_score = self.anomaly_model.predict_risk(clean_audio)
 
             # 2. 特征提取
             features = self.feature_extractor.extract(clean_audio)
