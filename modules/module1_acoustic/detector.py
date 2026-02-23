@@ -1,8 +1,4 @@
 #声学安全主类	继承 BaseGuardModule，实现物理层安全检测主逻辑。
-"""
-声学物理层检测器
-符合 core.base_module.BaseDetector 规范
-"""
 import os
 import numpy as np
 from core.base_module import BaseDetector
