@@ -1,68 +1,122 @@
 """
-异常检测模型训练脚本
-- 从指定目录加载正常音频和异常音频
-- 提取特征
-- 训练 One-Class SVM (或 Isolation Forest)
-- 保存模型
+train.py
+统一训练脚本，支持：
+- scikit-learn 模型 (One-Class SVM, Isolation Forest)
+- PyTorch 自编码器模型 (AEDCASEBaseline)
 """
 import os
+import argparse
 import numpy as np
-import librosa
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader
+import joblib
 from sklearn.svm import OneClassSVM
 from sklearn.ensemble import IsolationForest
-import joblib
+
+# 导入自定义模块
+from audio_dataset import AudioDataset
 from feature_extractor import FeatureExtractor
+from audio_preprocessor import AudioPreprocessor
+from acoustic_anomaly_model import AEDCASEBaseline, AnomalyModel
 
-def load_audio_files(directory, sr=16000, ext='.wav'):
-    """加载目录下所有音频文件，返回音频列表"""
-    audio_list = []
-    for file in os.listdir(directory):
-        if file.endswith(ext):
-            path = os.path.join(directory, file)
-            audio, _ = librosa.load(path, sr=sr)
-            audio_list.append(audio)
-    return audio_list
+def train_sklearn(args):
+    """训练 scikit-learn 模型（如 One-Class SVM）"""
+    print("训练 sklearn 模型...")
+    # 提取特征
+    preprocessor = AudioPreprocessor(target_sr=16000)
+    feature_extractor = FeatureExtractor(sr=16000)
 
-def extract_features_from_audios(audio_list, feature_extractor):
-    """从音频列表批量提取特征"""
+    dataset = AudioDataset(root_dir=args.train_dir, target_sr=16000)
     features = []
-    for audio in audio_list:
-        feat = feature_extractor.extract(audio)
+    for i in range(len(dataset)):
+        waveform = dataset[i].numpy()
+        # 预处理（降噪、VAD等）
+        clean = preprocessor.process(waveform)
+        feat = feature_extractor.extract(clean)
         features.append(feat)
-    return np.array(features)
+
+    X = np.array(features)
+    print(f"提取到 {X.shape[0]} 个样本，特征维度 {X.shape[1]}")
+
+    # 选择模型
+    if args.model_type == 'svm':
+        model = OneClassSVM(kernel='rbf', gamma='auto', nu=args.nu)
+    elif args.model_type == 'iforest':
+        model = IsolationForest(contamination=args.contamination, random_state=42)
+    else:
+        raise ValueError(f"未知 sklearn 模型类型: {args.model_type}")
+
+    model.fit(X)
+    # 保存模型
+    os.makedirs(os.path.dirname(args.save_path), exist_ok=True)
+    joblib.dump(model, args.save_path)
+    print(f"模型已保存至 {args.save_path}")
+
+def train_pytorch(args):
+    """训练 PyTorch 自编码器模型"""
+    print("训练 PyTorch 自编码器...")
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # 数据集与数据加载器
+    dataset = AudioDataset(root_dir=args.train_dir, target_sr=16000)
+    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
+
+    # 初始化模型
+    model = AEDCASEBaseline().to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    criterion = nn.MSELoss()
+
+    # 训练循环
+    model.train()
+    for epoch in range(args.epochs):
+        total_loss = 0
+        for batch in dataloader:
+            # batch: (batch_size, samples)
+            batch = batch.to(device)
+            optimizer.zero_grad()
+            recon_error = model(batch)  # 返回每个样本的重构误差
+            # 训练目标是让重构误差最小化，即让自编码器学会重构正常音频
+            # 这里我们用重构误差的均值作为损失（等同于MSE）
+            loss = recon_error.mean()
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item() * batch.size(0)
+
+        avg_loss = total_loss / len(dataset)
+        print(f"Epoch {epoch+1}/{args.epochs}, Loss: {avg_loss:.6f}")
+
+    # 保存模型权重
+    os.makedirs(os.path.dirname(args.save_path), exist_ok=True)
+    torch.save(model.state_dict(), args.save_path)
+    print(f"PyTorch 模型已保存至 {args.save_path}")
 
 def main():
-    # 配置
-    normal_dir = "data/normal_audio"
-    abnormal_dir = "data/abnormal_audio"
-    model_save_path = "models/ocsvm.pkl"
-    sr = 16000
+    parser = argparse.ArgumentParser(description="训练异常检测模型")
+    parser.add_argument('--backend', type=str, choices=['sklearn', 'pytorch'], default='sklearn',
+                        help='选择训练框架')
+    parser.add_argument('--model_type', type=str, default='svm',
+                        help='sklearn 模型类型: svm 或 iforest')
+    parser.add_argument('--train_dir', type=str, required=True,
+                        help='训练数据目录（仅包含正常音频）')
+    parser.add_argument('--save_path', type=str, required=True,
+                        help='模型保存路径（.pkl 或 .pt）')
+    parser.add_argument('--nu', type=float, default=0.1,
+                        help='One-Class SVM nu 参数')
+    parser.add_argument('--contamination', type=float, default=0.1,
+                        help='Isolation Forest contamination 参数')
+    parser.add_argument('--batch_size', type=int, default=16,
+                        help='PyTorch 训练批次大小')
+    parser.add_argument('--epochs', type=int, default=50,
+                        help='PyTorch 训练轮数')
+    parser.add_argument('--lr', type=float, default=1e-3,
+                        help='PyTorch 学习率')
+    args = parser.parse_args()
 
-    # 特征提取器
-    feature_extractor = FeatureExtractor(sr=sr)
-
-    # 加载正常音频
-    normal_audios = load_audio_files(normal_dir, sr=sr)
-    X_normal = extract_features_from_audios(normal_audios, feature_extractor)
-
-    # 如果有异常数据，可用于验证，但 One-Class SVM 只需要正常数据
-    # 训练模型
-    print(f"Training on {len(X_normal)} normal samples...")
-    model = OneClassSVM(kernel='rbf', gamma='auto', nu=0.1)  # nu 为异常比例预期
-    model.fit(X_normal)
-
-    # 保存模型
-    os.makedirs(os.path.dirname(model_save_path), exist_ok=True)
-    joblib.dump(model, model_save_path)
-    print(f"Model saved to {model_save_path}")
-
-    # 可选：在异常数据上测试
-    if os.path.exists(abnormal_dir):
-        abnormal_audios = load_audio_files(abnormal_dir, sr=sr)
-        X_abnormal = extract_features_from_audios(abnormal_audios, feature_extractor)
-        normal_score = model.score_samples(X_normal).mean()
-        abnormal_score = model.score_samples(X_abnormal).mean()
-        print(f"Avg normal score: {normal_score:.3f}, avg abnormal score: {abnormal_score:.3f}")
+    if args.backend == 'sklearn':
+        train_sklearn(args)
+    else:
+        train_pytorch(args)
 
 if __name__ == "__main__":
     main()
