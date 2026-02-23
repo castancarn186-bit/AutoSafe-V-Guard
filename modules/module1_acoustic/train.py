@@ -3,6 +3,11 @@ train.py
 统一训练脚本，支持：
 - scikit-learn 模型 (One-Class SVM, Isolation Forest)
 - PyTorch 自编码器模型 (AEDCASEBaseline)
+
+训练 sklearn One-Class SVM 代码：
+python train.py --backend sklearn --model_type svm --train_dir data/train_acoustic/normal --save_path modules/module1_acoustic/models/ocsvm.pkl --nu 0.1
+训练 PyTorch 自编码器代码：
+python train.py --backend pytorch --train_dir data/train_acoustic/normal --save_path modules/module1_acoustic/models/ae.pt --epochs 50 --batch_size 16
 """
 import os
 import argparse
@@ -120,3 +125,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
