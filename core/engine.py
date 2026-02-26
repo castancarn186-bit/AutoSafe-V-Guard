@@ -1,4 +1,116 @@
 #风险融合决策引擎	收集 A/B/C 的报告，执行加权算法，输出最终决策。
+# core/engine.py
+import os
+import sys
+import logging
+import matplotlib
+
+# 强制使用 Agg 后端，防止在后台运行时弹出窗口导致程序卡死
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
+from core.state import shared_state, ModuleReport
+
+# 动态导入模块 3 的组件
+# 假设你的项目结构中，core 和 modules 都在根目录下
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+M3_PATH = os.path.join(ROOT_DIR, "modules", "module3_semantic")
+sys.path.append(os.path.join(M3_PATH, "src"))
+
+try:
+    from semantic_lib import SemanticLibrary
+    from state_model import DrivingStateModel
+    from risk_assessment import RiskManager
+except ImportError as e:
+    print(f"核心组件加载失败: {e}")
+
+
+class VGuardEngine:
+    """V-Guard 风险融合决策引擎 (集成语义防御模块)"""
+
+    def __init__(self):
+        print("🚀 [V-Guard Engine] 正在初始化离线安全决策内核...")
+
+        # 1. 路径配置
+        ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.model_path = os.path.join(ROOT_DIR, "modules", "semantic_model")
+        self.data_path = os.path.join(M3_PATH, "data", "raw_commands.csv")
+        # 获取当前文件所在目录的上一级（项目根目录）
+        # 强制把输出目录设为 ui/assets
+        self.output_dir = os.path.join(ROOT_DIR, "ui", "assets")
+        os.makedirs(self.output_dir, exist_ok=True)
+        os.makedirs(self.output_dir, exist_ok=True)
+
+        # 2. 初始化语义组件
+        # 强制离线模式
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+        self.sem_lib = SemanticLibrary(model_name=self.model_path)
+        self.sem_lib.load_dataset(self.data_path)
+        self.sem_lib.process_embeddings()
+        self.sem_lib.cluster_commands(n_clusters=5)
+
+        # 交付物 1：初始化时生成一次语义聚类图（静态）
+        self.generate_cluster_map()
+
+        self.state_model = DrivingStateModel()
+        self.risk_mgr = RiskManager(input_dim=16)
+
+    def generate_cluster_map(self):
+        """生成交付物 1：语义聚类图"""
+        self.sem_lib.visualize_clusters()
+        # 将生成的图保存到 UI 目录
+        save_path = os.path.join(self.output_dir, "m3_clusters.png")
+        plt.savefig(save_path)
+        plt.close()
+        print(f"📊 [Engine] 已保存语义聚类图: {save_path}")
+
+    async def run_pipeline(self, text):
+        """
+        核心防御流水线：ASR 文本 -> 语义匹配 -> 状态融合 -> 风险判定
+        """
+        if not text:
+            return
+
+        print(f"🛡️ [V-Guard] 正在对指令 '{text}' 进行多源风险评估...")
+
+        # 1. 语义特征提取
+        standard_cmd, cluster_id, confidence = self.sem_lib.match_intent(text)
+        cmd_embedding = self.sem_lib.model.encode([standard_cmd])[0]
+
+        # 2. 实时驾驶状态感知 (对接 shared_state 里的真实数据)
+        current_speed = getattr(shared_state, 'vehicle_speed', 0.0)
+        mock_sensor_data = {
+            'speed': current_speed,
+            'speed_limit': 80.0,
+            'auto_mode': False,
+            'surroundings': {'front_dist': 30.0, 'pedestrian_near': False,'lane_keeping': True}
+        }
+        self.state_model.update_from_sensors(mock_sensor_data)
+        state_vector = self.state_model.get_state_vector()
+
+        # 交付物 2：生成驾驶状态可视化图（动态刷新）
+        self.state_model.visualize_state()
+
+        # 3. 风险评分与决策
+        input_tensor = self.risk_mgr.prepare_input(cmd_embedding, state_vector)
+        risk_score = self.risk_mgr.evaluate(input_tensor)
+        decision, _ = self.risk_mgr.generate_risk_matrix(risk_score)
+
+        # 交付物 3：生成决策矩阵图（动态刷新）
+        decision, _ = self.risk_mgr.generate_risk_matrix(risk_score)
+
+        # 4. 更新系统状态，供 UI 显示
+        report = ModuleReport(
+            module_id="C",
+            risk_score=float(risk_score),
+            status="DENY" if decision == "DENY" else "PASS",
+            reason=f"匹配意图: {standard_cmd}"
+        )
+        shared_state.update_module_report(report)
+
+        return decision
+'''
+#仅接入第二部分
 import os
 import time
 import json
@@ -47,6 +159,7 @@ class VGuardEngine:
 
 
 # 确保在文件末尾没有多余的、会导致报错的旧代码
+'''
 '''
 import asyncio
 import time
@@ -161,6 +274,7 @@ class VGuardEngine:
             decision = DecisionType.PASS.value
 
         return round(total_score, 2), decision
+
 '''
 '''
 # core/engine.py

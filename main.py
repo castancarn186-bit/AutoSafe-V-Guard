@@ -1,4 +1,4 @@
-# main.py
+# ctest_3.py
 import flet as ft
 import logging
 from ui.app import main_ui  # 确保这里只引用 app.py

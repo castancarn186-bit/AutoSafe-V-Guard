@@ -1,7 +1,0 @@
-
-{
-  "dangerous_commands": ["打开后备箱", "关闭引擎", "解锁车门"],
-  "speed_threshold_kmh": 10,
-  "system_mode": "strict",
-  "\"安全策略库,存储硬性规则":10
-}

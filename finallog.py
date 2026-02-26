@@ -20,7 +20,7 @@ def dump_project():
             print(f"[Check] 未找到目录: {d} x")
 
     if not found_any:
-        print("\n[Error] 找不到核心文件夹！请确保此脚本放在 AutoSafe-V-Guard 根目录下（和 main.py 同级）。")
+        print("\n[Error] 找不到核心文件夹！请确保此脚本放在 AutoSafe-V-Guard 根目录下（和 ctest_3.py 同级）。")
         return
 
     # 3. 开始扫描
