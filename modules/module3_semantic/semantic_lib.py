@@ -5,8 +5,7 @@ from sklearn.cluster import KMeans
 from sklearn.manifold import TSNE
 import matplotlib.pyplot as plt
 import os
-import matplotlib
-matplotlib.use('Agg') # 告诉程序在后台绘图，不要弹出那个白色的预览窗口
+
 class SemanticLibrary:
     def __init__(self, model_name='paraphrase-multilingual-MiniLM-L12-v2'):
         # 加载预训练语义嵌入模型
@@ -58,7 +57,7 @@ class SemanticLibrary:
             
         return self.command_map
 
-    def visualize_clusters(self, save_path='ui/assets/m3_clusters.png'):
+    def visualize_clusters(self, save_path='outputs/semantic_clusters.png'):
         """使用 t-SNE 降维可视化指令分布"""
         if self.embeddings is None:
             raise ValueError("请先运行 process_embeddings")
@@ -101,7 +100,7 @@ class SemanticLibrary:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         plt.savefig(save_path, dpi=150, bbox_inches='tight')  # 高清保存
         print(f"✅ 语义聚类图已保存至：{save_path}")
-        plt.close()
+        plt.show()   
 
     def match_intent(self, input_text):
         """输入新指令，匹配到最接近的标准指令"""

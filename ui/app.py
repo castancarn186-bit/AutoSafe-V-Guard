@@ -1,18 +1,18 @@
+# ui/app.py
 import flet as ft
 import asyncio
 import os
 import wave
 import pyaudio
-import threading
 import time
 from datetime import datetime
-import base64
+import librosa
+
 # 核心架构导入
-from core.state import shared_state, ModuleReport
+from core.state import shared_state
 from core.engine import VGuardEngine
 from modules.module2_ASR.asr_risk_model import ASRRiskModel
 
-# 强制修复多线程 DLL 冲突
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 # --- 样式常量 ---
@@ -44,7 +44,6 @@ def create_glowing_panel(title, content, glow_color=CYAN_GLOW, expand=True):
     )
 
 
-# --- 录音辅助工具 ---
 def record_audio_blocking(filename="realtime_mic.wav", duration=5):
     CHUNK = 1024
     FORMAT = pyaudio.paInt16
@@ -67,19 +66,21 @@ def record_audio_blocking(filename="realtime_mic.wav", duration=5):
 
 
 async def main_ui(page: ft.Page):
-    # ==========================================
-    # 0. 引擎与模型初始化
-    # ==========================================
     engine = VGuardEngine()
+
+    if not hasattr(shared_state, 'total_risk'): shared_state.total_risk = 0.0
+    if not hasattr(shared_state, 'decision'): shared_state.decision = "PASS"
+    if not hasattr(shared_state, 'latest_reports'): shared_state.latest_reports = []
+    if not hasattr(shared_state, 'vehicle_speed'): shared_state.vehicle_speed = 0
+    if not hasattr(shared_state, 'weather'): shared_state.weather = "sunny"
+    if not hasattr(shared_state, 'asr_text'): shared_state.asr_text = "等待输入..."
+
     if not hasattr(shared_state, 'asr_model'):
-        shared_state.asr_model = ASRRiskModel()
+        try:
+            shared_state.asr_model = ASRRiskModel()
+        except:
+            pass
 
-    # 创建 assets 目录确保图片能保存
-    os.makedirs("ui/assets", exist_ok=True)
-
-    # ==========================================
-    # 1. 页面基本配置
-    # ==========================================
     page.title = "V-Guard Pro | 智能座舱防御总控"
     page.bgcolor = BG_COLOR
     page.padding = 20
@@ -87,65 +88,51 @@ async def main_ui(page: ft.Page):
     page.window_height = 900
     page.theme_mode = ft.ThemeMode.DARK
 
-    # 在 main_ui 函数内部定义这个工具
-    def get_img_uri(file_name):
-        # 这里的路径一定要对应你日志里的保存路径
-        import base64
-        curr_dir = os.path.dirname(os.path.abspath(__file__))
-        path = os.path.join(curr_dir, "assets", file_name)
+    # ==========================================
+    # 🌟 架构师定制：三个动态颜色风险圆圈组件
+    # ==========================================
+    def create_risk_circle(title):
+        ring = ft.ProgressRing(width=70, height=70, stroke_width=7, value=0.0, color=GREEN_GLOW, bgcolor=BORDER_COLOR)
+        val_text = ft.Text("0.00", size=16, weight="bold", color="white")
+        reason_text = ft.Text("待机中", size=10, color=TEXT_MUTED, text_align="center")
 
-        if os.path.exists(path):
-            try:
-                with open(path, "rb") as f:
-                    data = base64.b64encode(f.read()).decode("utf-8")
-                    return f"data:image/png;base64,{data}"
-            except Exception as e:
-                print(f"读取图片失败: {e}")
-        return ""  # 如果不存在返回空
-    # ==========================================
-    # 2. UI 控件定义 (可视化图表)
-    # ==========================================
-    # 图片控件初始化 (使用占位图路径，?t=0 防止缓存)
-    # 请确保这三行里的 fit 后面都是字符串 "contain"
-    # 因为 Flet 启动时已经指定了 assets 文件夹，所以这里直接写文件名就行
-    # 初始显示使用 src_base64 而不是 src
-        # 使用通用的 src 属性，避开 src_base64 参数
-    img_clusters = ft.Image(src=get_img_uri("m3_clusters.png"), width=180, height=130, fit="contain")
-    img_state = ft.Image(src=get_img_uri("m3_state.png"), width=180, height=130, fit="contain")
-    img_risk = ft.Image(src=get_img_uri("m3_decision_matrix.png"), width=180, height=130, fit="contain")
+        box = ft.Container(
+            content=ft.Column([
+                ft.Text(title, size=12, weight="bold", color="white"),
+                ft.Stack([
+                    ring,
+                    ft.Container(val_text, alignment=ft.Alignment(0, 0), width=70, height=70)
+                ]),
+                reason_text
+            ], horizontal_alignment="center", spacing=5),
+            padding=10, border=get_border(1, BORDER_COLOR), border_radius=10, width=130
+        )
+        return box, ring, val_text, reason_text
 
-    visual_evidence_row = ft.Container(
-        content=ft.Row([
-            ft.Column([ft.Text("语义聚类", size=10, color=TEXT_MUTED), img_clusters], horizontal_alignment="center"),
-            ft.Column([ft.Text("环境特征", size=10, color=TEXT_MUTED), img_state], horizontal_alignment="center"),
-            ft.Column([ft.Text("决策矩阵", size=10, color=TEXT_MUTED), img_risk], horizontal_alignment="center"),
-        ], alignment=ft.MainAxisAlignment.SPACE_EVENLY),
-        padding=10, border=get_border(1, BORDER_COLOR), border_radius=10, bgcolor="#05080b"
-    )
+    box_a, ring_a, val_a, reason_a = create_risk_circle("A: 声学物理层")
+    box_b, ring_b, val_b, reason_b = create_risk_circle("B: ASR行为层")
+    box_c, ring_c, val_c, reason_c = create_risk_circle("C: 语义状态层")
 
-    # ==========================================
-    # 3. 交互控制事件
-    # ==========================================
+    visual_evidence_row = ft.Row([box_a, ft.Icon(ft.Icons.ARROW_FORWARD, color=CYAN_GLOW),
+                                  box_b, ft.Icon(ft.Icons.ARROW_FORWARD, color=CYAN_GLOW),
+                                  box_c], alignment="center")
+
     async def start_voice_defense(e):
         btn_voice.disabled = True
-        btn_voice.text = "正在录音..."
+        btn_voice.text = "正在录音 (5秒)..."
         btn_voice.icon_color = RED_GLOW
         page.update()
 
-        # 1. 录制
         audio_file = await asyncio.to_thread(record_audio_blocking, "realtime_mic.wav", 5)
 
         btn_voice.text = "安全决策引擎分析中..."
         btn_voice.icon_color = ORANGE_GLOW
         page.update()
 
-        # 2. 调用 B 模块 (ASR + 行为风险)
-        import librosa
         try:
             audio_matrix, _ = librosa.load(audio_file, sr=16000)
             asr_res = await asyncio.to_thread(shared_state.asr_model.compute_risk, audio_matrix)
 
-            # 提取文字
             raw_text = "识别失败"
             for attr in ["text", "transcription", "result"]:
                 if hasattr(asr_res, attr):
@@ -153,40 +140,35 @@ async def main_ui(page: ft.Page):
                     if val: raw_text = str(val); break
 
             shared_state.asr_text = raw_text.replace("請", "请").replace("開", "开")
-            risk_b = getattr(asr_res, "risk_score", 0.5)
 
-            # 3. 调用核心引擎 (触发 Module C 语义分析并生成图片)
-            # 这里会保存最新的图片到 ui/assets/
-            decision_final = await engine.run_pipeline(shared_state.asr_text)
+            result = await asyncio.to_thread(
+                engine.analyze_risk,
+                audio_data=audio_file,
+                asr_text=shared_state.asr_text,
+                speed=shared_state.vehicle_speed
+            )
 
-
-            # 强制刷新：重新读取文件并转为 URI 字符串
-            img_clusters.src = get_img_uri("m3_clusters.png")
-            img_state.src = get_img_uri("m3_state.png")
-            img_risk.src = get_img_uri("m3_decision_matrix.png")
+            shared_state.total_risk = result["total_risk"]
+            shared_state.decision = result["decision"]
+            shared_state.latest_reports = result["reports"]
 
             ts = datetime.now().strftime("%H:%M:%S")
+            decision_final = result["decision"]
             log_list.controls.insert(0, ft.Text(
-                f"[{ts}] {decision_final} | 指令: {shared_state.asr_text[:12]}...",
-                color=RED_GLOW if decision_final == "DENY" else GREEN_GLOW,
-                size=11, weight="bold"
+                f"[{ts}] {decision_final} | 风险值: {result['total_risk']:.2f} | 耗时: {result['latency_ms']}ms",
+                color=RED_GLOW if decision_final == "BLOCK" else (
+                    ORANGE_GLOW if decision_final == "REVIEW" else GREEN_GLOW),
+                size=12, weight="bold"
             ))
 
-            # 4. 手动触发页面更新
             page.update()
-
-            # 恢复按钮状态
-            btn_voice.disabled = False
-            btn_voice.text = "开启语音防御监测"
-            page.update()
-
         except Exception as ex:
             print(f"❌ 运行错误: {ex}")
 
-
-
-
-
+        btn_voice.disabled = False
+        btn_voice.text = "开启语音防御监测"
+        btn_voice.icon_color = CYAN_GLOW
+        page.update()
 
     def update_speed(e):
         val = int(e.control.value)
@@ -195,7 +177,6 @@ async def main_ui(page: ft.Page):
         speed_ring.value = min(val / 200.0, 1.0)
         page.update()
 
-    # --- 左侧：环境模拟 ---
     speed_text = ft.Text(str(shared_state.vehicle_speed), size=60, weight="900", color="white")
     speed_ring = ft.ProgressRing(width=250, height=250, stroke_width=15, value=0.0, color=CYAN_GLOW,
                                  bgcolor=BORDER_COLOR)
@@ -206,11 +187,10 @@ async def main_ui(page: ft.Page):
         width=250, height=250)])
 
     speed_slider = ft.Slider(min=0, max=200, divisions=40, value=shared_state.vehicle_speed, on_change=update_speed)
-    panel_left = create_glowing_panel("CONTEXT SIMULATOR", ft.Column(
+    panel_left = create_glowing_panel("CONTEXT SIMULATOR (环境控制)", ft.Column(
         [ft.Container(height=10), ft.Container(speedometer, alignment=ft.Alignment(0, 0)), ft.Container(height=20),
          ft.Text("车速控制", color="white"), speed_slider]))
 
-    # --- 中侧：防御管线 (可视化展示区) ---
     user_bubble_text = ft.Text("等待输入...", size=18, color="white")
     user_bubble = ft.Container(content=user_bubble_text, padding=15, border_radius=15, border=get_border(2, CYAN_GLOW),
                                bgcolor="#00f2ff10")
@@ -219,45 +199,26 @@ async def main_ui(page: ft.Page):
     system_reason = ft.Text("系统正常运行中", size=14, color=TEXT_MUTED)
     system_bubble = ft.Container(content=ft.Row(
         [ft.Icon(ft.Icons.SHIELD, color=CYAN_GLOW, size=40), ft.Column([system_title, system_reason], spacing=2)]),
-                                 padding=20, border_radius=15, border=get_border(2, CYAN_GLOW), bgcolor="#00f2ff10")
+        padding=20, border_radius=15, border=get_border(2, CYAN_GLOW), bgcolor="#00f2ff10")
 
-    def xray_box(title):
-        val = ft.Text("Risk: 0.00", size=10, color=TEXT_MUTED)
-        return ft.Container(
-            content=ft.Column([ft.Text(title, size=12, weight="bold"), val], horizontal_alignment="center"), padding=10,
-            border=get_border(1, BORDER_COLOR), border_radius=10), val
-
-    box_a, xray_a_val = xray_box("声学(A)")
-    box_b, xray_b_val = xray_box("行为(B)")
-    box_c, xray_c_val = xray_box("语义(C)")
-
-    panel_mid = create_glowing_panel("V-GUARD DEFENSE PIPELINE", ft.Column([
+    panel_mid = create_glowing_panel("V-GUARD DEFENSE PIPELINE (防御管线)", ft.Column([
+        ft.Container(height=10), user_bubble, ft.Container(height=20), system_bubble, ft.Container(height=40),
+        ft.Text("📊 X-RAY MODULE METRICS (三级透视雷达)", size=12, weight="bold", color="white"),
         ft.Container(height=10),
-        user_bubble,
-        ft.Container(height=20),
-        system_bubble,
-        ft.Container(height=30),
-        # --- 核心可视化组件插入 ---
-        ft.Text("📊 安全可解释性分析 (OFFLINE X-RAY)", size=12, weight="bold", color="white"),
         visual_evidence_row,
-        # ------------------------
-        ft.Container(expand=True),
-        ft.Row([box_a, ft.Icon(ft.Icons.ARROW_FORWARD), box_b, ft.Icon(ft.Icons.ARROW_FORWARD), box_c],
-               alignment="center")
+        ft.Container(expand=True)
     ]))
 
-    # --- 右侧：控制与日志 ---
     btn_voice = ft.ElevatedButton("开启语音防御监测", icon=ft.Icons.MIC, color=CYAN_GLOW, on_click=start_voice_defense,
                                   height=50)
     log_list = ft.ListView(expand=True, spacing=5, auto_scroll=True)
-    panel_right = create_glowing_panel("ATTACK & TELEMETRY", ft.Column([
+    panel_right = create_glowing_panel("ATTACK & TELEMETRY ( telemetry与日志 )", ft.Column([
         btn_voice,
         ft.Divider(height=20, color=BORDER_COLOR),
-        ft.Text("实时日志", size=12, weight="bold"),
+        ft.Text("实时防御日志", size=12, weight="bold"),
         ft.Container(log_list, expand=True)
     ]))
 
-    # --- 页面布局 ---
     page.add(
         ft.Row([ft.Icon(ft.Icons.SHIELD_MOON, color=CYAN_GLOW), ft.Text("V-GUARD PRO", size=24, weight="900")],
                alignment="center"),
@@ -265,40 +226,54 @@ async def main_ui(page: ft.Page):
         ft.Row([panel_left, panel_mid, panel_right], expand=True, spacing=20)
     )
 
-    # --- 刷新任务 ---
+    def get_color(score):
+        if score < 0.3: return GREEN_GLOW
+        if score < 0.6: return ORANGE_GLOW
+        return RED_GLOW
+
     async def refresh_task():
         while True:
-            # 仅刷新状态文字和总风险颜色
             total = shared_state.total_risk
             decision = shared_state.decision
             user_bubble_text.value = f"User: {shared_state.asr_text}"
 
-            # 更新风险小方块的分数 (A/B/C)
+            if decision == "BLOCK":
+                system_title.value = f"● 拦截 (BLOCK) Risk: {total:.2f}"
+                system_title.color = RED_GLOW
+            elif decision == "REVIEW":
+                system_title.value = f"● 警告 (REVIEW) Risk: {total:.2f}"
+                system_title.color = ORANGE_GLOW
+            else:
+                system_title.value = f"● 放行 (PASS) Risk: {total:.2f}"
+                system_title.color = GREEN_GLOW
+
             if shared_state.latest_reports:
                 for r in shared_state.latest_reports:
+                    c = get_color(r.risk_score)
                     if r.module_id == "A":
-                        xray_a_val.value = f"Risk: {r.risk_score:.2f}"
+                        val_a.value = f"{r.risk_score:.2f}"
+                        ring_a.value = r.risk_score
+                        ring_a.color, val_a.color = c, c
+                        reason_a.value = f"{r.reason[:15]}"
                     elif r.module_id == "B":
-                        xray_b_val.value = f"Risk: {r.risk_score:.2f}"
+                        val_b.value = f"{r.risk_score:.2f}"
+                        ring_b.value = r.risk_score
+                        ring_b.color, val_b.color = c, c
+                        reason_b.value = f"{r.reason[:15]}"
                     elif r.module_id == "C":
-                        xray_c_val.value = f"Risk: {r.risk_score:.2f}"
+                        val_c.value = f"{r.risk_score:.2f}"
+                        ring_c.value = r.risk_score
+                        ring_c.color, val_c.color = c, c
+                        reason_c.value = f"{r.reason[:15]}"
 
             page.update()
-            await asyncio.sleep(0.5)  # 每0.5秒刷新一次基础数据
+            await asyncio.sleep(0.5)
+
+    page.run_task(refresh_task)
 
 
 if __name__ == "__main__":
-    # 强制获取 ui/assets 的绝对路径，不管你在哪运行都能找对
-    import os
-
-    curr_dir = os.path.dirname(os.path.abspath(__file__))
-    assets_path = os.path.join(curr_dir, "assets")
-
-    # 打印一下，确保文件夹确实存在
-    if not os.path.exists(assets_path):
-        os.makedirs(assets_path)
-
-    ft.app(target=main_ui, assets_dir=assets_path)
+    ft.app(target=main_ui)
 '''
 # ui/app.py
 import flet as ft

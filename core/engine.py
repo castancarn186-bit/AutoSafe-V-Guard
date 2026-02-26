@@ -1,114 +1,120 @@
-#风险融合决策引擎	收集 A/B/C 的报告，执行加权算法，输出最终决策。
 # core/engine.py
 import os
-import sys
+import time
 import logging
-import matplotlib
-
-# 强制使用 Agg 后端，防止在后台运行时弹出窗口导致程序卡死
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-
-from core.state import shared_state, ModuleReport
-
-# 动态导入模块 3 的组件
-# 假设你的项目结构中，core 和 modules 都在根目录下
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-M3_PATH = os.path.join(ROOT_DIR, "modules", "module3_semantic")
-sys.path.append(os.path.join(M3_PATH, "src"))
-
-try:
-    from semantic_lib import SemanticLibrary
-    from state_model import DrivingStateModel
-    from risk_assessment import RiskManager
-except ImportError as e:
-    print(f"核心组件加载失败: {e}")
+from core.protocol import SystemContext
+from modules.module1_acoustic.detector import AcousticDetector
+from modules.module2_ASR.detector import ASRDetector
+from modules.module3_semantic.detector import SemanticDetector
+from hardware.gpio_ctrl import vguard_hw  # 导入硬件控制
+from data.database_manager import DatabaseManager
 
 
 class VGuardEngine:
-    """V-Guard 风险融合决策引擎 (集成语义防御模块)"""
-
     def __init__(self):
-        print("🚀 [V-Guard Engine] 正在初始化离线安全决策内核...")
+        self.logger = logging.getLogger("VGuard.Engine")
+        self.db = DatabaseManager()
 
-        # 1. 路径配置
-        ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        self.model_path = os.path.join(ROOT_DIR, "modules", "semantic_model")
-        self.data_path = os.path.join(M3_PATH, "data", "raw_commands.csv")
-        # 获取当前文件所在目录的上一级（项目根目录）
-        # 强制把输出目录设为 ui/assets
-        self.output_dir = os.path.join(ROOT_DIR, "ui", "assets")
-        os.makedirs(self.output_dir, exist_ok=True)
-        os.makedirs(self.output_dir, exist_ok=True)
+        # 1. 初始化三大标准探测器
+        self.m1 = AcousticDetector()
+        self.m2 = ASRDetector()
+        self.m3 = SemanticDetector()
 
-        # 2. 初始化语义组件
-        # 强制离线模式
-        os.environ["TRANSFORMERS_OFFLINE"] = "1"
-        self.sem_lib = SemanticLibrary(model_name=self.model_path)
-        self.sem_lib.load_dataset(self.data_path)
-        self.sem_lib.process_embeddings()
-        self.sem_lib.cluster_commands(n_clusters=5)
+        # 执行模块A的初始化（如加载降级模型）
+        self.m1.setup()
 
-        # 交付物 1：初始化时生成一次语义聚类图（静态）
-        self.generate_cluster_map()
-
-        self.state_model = DrivingStateModel()
-        self.risk_mgr = RiskManager(input_dim=16)
-
-    def generate_cluster_map(self):
-        """生成交付物 1：语义聚类图"""
-        self.sem_lib.visualize_clusters()
-        # 将生成的图保存到 UI 目录
-        save_path = os.path.join(self.output_dir, "m3_clusters.png")
-        plt.savefig(save_path)
-        plt.close()
-        print(f"📊 [Engine] 已保存语义聚类图: {save_path}")
-
-    async def run_pipeline(self, text):
-        """
-        核心防御流水线：ASR 文本 -> 语义匹配 -> 状态融合 -> 风险判定
-        """
-        if not text:
-            return
-
-        print(f"🛡️ [V-Guard] 正在对指令 '{text}' 进行多源风险评估...")
-
-        # 1. 语义特征提取
-        standard_cmd, cluster_id, confidence = self.sem_lib.match_intent(text)
-        cmd_embedding = self.sem_lib.model.encode([standard_cmd])[0]
-
-        # 2. 实时驾驶状态感知 (对接 shared_state 里的真实数据)
-        current_speed = getattr(shared_state, 'vehicle_speed', 0.0)
-        mock_sensor_data = {
-            'speed': current_speed,
-            'speed_limit': 80.0,
-            'auto_mode': False,
-            'surroundings': {'front_dist': 30.0, 'pedestrian_near': False,'lane_keeping': True}
+        # 2. 定义权重 (一等奖级：可解释的融合策略)
+        self.weights = {
+            "A": 0.3,  # 物理层异常
+            "B": 0.2,  # ASR 置信度
+            "C": 0.5  # 语义合规性 (涉及车辆安全)
         }
-        self.state_model.update_from_sensors(mock_sensor_data)
-        state_vector = self.state_model.get_state_vector()
+        self.logger.info("V-Guard 决策引擎初始化完成，权重配置: A=0.3, B=0.2, C=0.5")
 
-        # 交付物 2：生成驾驶状态可视化图（动态刷新）
-        self.state_model.visualize_state()
+    def analyze_risk(self, audio_data, asr_text, speed):
+        """
+        对接 app.py 的核心联调函数
+        """
+        start_ts = time.perf_counter()
 
-        # 3. 风险评分与决策
-        input_tensor = self.risk_mgr.prepare_input(cmd_embedding, state_vector)
-        risk_score = self.risk_mgr.evaluate(input_tensor)
-        decision, _ = self.risk_mgr.generate_risk_matrix(risk_score)
+        # ==========================================
+        # 🐞 架构师级修复：精准参数适配
+        # 成员A需要 SystemContext 对象
+        # 成员B需要 原始音频路径
+        # 成员C需要 识别文本和状态字典
+        # ==========================================
+        ctx = SystemContext(audio_frame=audio_data, asr_text=asr_text, speed=speed)
 
-        # 交付物 3：生成决策矩阵图（动态刷新）
-        decision, _ = self.risk_mgr.generate_risk_matrix(risk_score)
+        # 1. 依次调用三个标准接口
+        try:
+            r1 = self.m1.detect(ctx)  # 正确：传入整个 ctx 对象
+        except Exception as e:
+            self.logger.error(f"模块 A 崩溃: {e}")
+            from core.protocol import RiskReport
+            r1 = RiskReport("A", 0.1, "PASS", "模块异常，降级放行")
 
-        # 4. 更新系统状态，供 UI 显示
-        report = ModuleReport(
-            module_id="C",
-            risk_score=float(risk_score),
-            status="DENY" if decision == "DENY" else "PASS",
-            reason=f"匹配意图: {standard_cmd}"
-        )
-        shared_state.update_module_report(report)
+        try:
+            r2 = self.m2.detect(audio_data)  # 正确：传入音频数据
+        except Exception as e:
+            self.logger.error(f"模块 B 崩溃: {e}")
+            from core.base_module import DetectionResult
+            r2 = DetectionResult("B", 0.1, "PASS", "模块异常，降级放行")
 
-        return decision
+        try:
+            r3 = self.m3.detect(asr_text, {"speed": speed})  # 正确：传入文本和车速
+        except Exception as e:
+            self.logger.error(f"模块 C 崩溃: {e}")
+            from core.base_module import DetectionResult
+            r3 = DetectionResult("C", 0.1, "PASS", "模块异常，降级放行")
+
+        reports = [r1, r2, r3]
+
+        # 2. 风险融合计算 (兼容不同对象属性)
+        total_risk = 0.0
+        for r in reports:
+            # 动态获取分数和ID，防范属性名不同的问题
+            score = getattr(r, 'risk_score', 0.0)
+            m_id = getattr(r, 'module_id', 'Unknown')
+            total_risk += score * self.weights.get(m_id, 0)
+
+        # 3. 最终决策决策与硬件联动
+        if total_risk > 0.7:
+            decision = "BLOCK"
+            try:
+                vguard_hw.set_led("RED", True)
+                vguard_hw.set_led("GREEN", False)
+            except:
+                pass
+        elif total_risk > 0.3:
+            decision = "REVIEW"
+            try:
+                vguard_hw.set_led("RED", False)
+                vguard_hw.set_led("GREEN", False)
+            except:
+                pass
+        else:
+            decision = "PASS"
+            try:
+                vguard_hw.set_led("RED", False)
+                vguard_hw.set_led("GREEN", True)
+            except:
+                pass
+
+        latency = round((time.perf_counter() - start_ts) * 1000, 2)
+
+        # 4. 存入数据库
+        try:
+            self.db.save_log(total_risk, decision, reports)
+        except Exception as e:
+            self.logger.warning(f"数据库记录失败 (可忽略): {e}")
+
+        return {
+            "total_risk": total_risk,
+            "decision": decision,
+            "reports": reports,
+            "latency_ms": latency
+        }
+
 '''
 #仅接入第二部分
 import os

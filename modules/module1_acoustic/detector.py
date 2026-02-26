@@ -1,16 +1,19 @@
-#声学安全主类	继承 BaseGuardModule，实现物理层安全检测主逻辑。
+# 声学安全主类	继承 BaseGuardModule，实现物理层安全检测主逻辑。
 import os
 import numpy as np
+import torch
 from core.base_module import BaseDetector
 from core.protocol import SystemContext, RiskReport
-from audio_preprocessor import AudioPreprocessor
-from feature_extractor import FeatureExtractor
-from acoustic_anomaly_model import AnomalyModel
-from acoustic_risk_normalizer import RiskNormalizer
+
+from modules.module1_acoustic.audio_preprocessor import AudioPreprocessor
+from modules.module1_acoustic.feature_extractor import FeatureExtractor
+from modules.module1_acoustic.acoustic_anomaly_model import AnomalyModel
+from modules.module1_acoustic.acoustic_risk_normalizer import RiskNormalizer
+
 
 class AcousticDetector(BaseDetector):
     def __init__(self, config=None):
-        super().__init__()
+        super().__init__(module_id="A")
         self.config = config or {}
         self.preprocessor = None
         self.feature_extractor = None
@@ -35,10 +38,15 @@ class AcousticDetector(BaseDetector):
             'model_path',
             os.path.join(os.path.dirname(__file__), 'models', 'ocsvm.pkl')
         )
+
+        # =========================================================
+        # 🔥 架构师修复：去掉强行 raise 崩溃，改为优雅降级
+        # =========================================================
         if not os.path.exists(model_path):
-            self.logger.error(f"Model file not found: {model_path}")
-            raise FileNotFoundError(f"Acoustic model missing: {model_path}")
-        self.anomaly_model = AnomalyModel(model_path)
+            self.logger.warning(f"⚠️ 找不到声学模型: {model_path}，模块 A 进入降级放行模式！")
+            self.anomaly_model = None
+        else:
+            self.anomaly_model = AnomalyModel(model_path)
 
         # 风险归一化器
         norm_method = self.config.get('norm_method', 'sigmoid')
@@ -54,15 +62,27 @@ class AcousticDetector(BaseDetector):
         audio = ctx.audio_frame
         if audio is None or len(audio) == 0:
             return RiskReport(
+                module_id=self.module_id,
                 risk_score=0.0,
                 suggestion="PASS",
                 reason="No audio input",
                 evidence={}
             )
 
+        # =========================================================
+        # 🔥 架构师修复：降级模式下，直接返回安全分，不执行模型推理
+        # =========================================================
+        if self.anomaly_model is None:
+            return RiskReport(
+                module_id=self.module_id,
+                risk_score=0.1,
+                suggestion="PASS",
+                reason="模型文件缺失，默认放行",
+                evidence={"fallback": True}
+            )
+
         try:
-            # 1. 预处理（假设输入音频已经是16kHz，但如果ctx中有原始采样率信息，可以传入）
-            # 目前ctx可能不包含采样率，假设与目标一致；若不一致需在配置中说明
+            # 1. 预处理
             clean_audio = self.preprocessor.process(audio)
             if self.anomaly_model.model_type == 'sklearn':
                 features = self.feature_extractor.extract(clean_audio)
@@ -82,13 +102,14 @@ class AcousticDetector(BaseDetector):
             # 5. 决策建议
             suggestion = self._get_suggestion(risk_score)
 
-            # 6. 构建证据（可选，可用于调试）
+            # 6. 构建证据
             evidence = {
                 "raw_score": raw_score,
                 "feature_norm": np.linalg.norm(features).item()
             }
 
             return RiskReport(
+                module_id=self.module_id,
                 risk_score=risk_score,
                 suggestion=suggestion,
                 reason="Acoustic anomaly check",
@@ -97,6 +118,7 @@ class AcousticDetector(BaseDetector):
         except Exception as e:
             self.logger.exception("Error in acoustic detection")
             return RiskReport(
+                module_id=self.module_id,
                 risk_score=0.5,  # 保守值
                 suggestion="PASS",
                 reason=f"Acoustic detection error: {str(e)}",

@@ -4,8 +4,7 @@ import torch.nn as nn
 import seaborn as sns
 import matplotlib.pyplot as plt
 import os
-import matplotlib
-matplotlib.use('Agg') # 告诉程序在后台绘图，不要弹出那个白色的预览窗口
+
 class RiskAssessmentModel(nn.Module):
     def __init__(self, input_dim):
         super(RiskAssessmentModel, self).__init__()
@@ -46,7 +45,7 @@ class RiskManager:
             risk_score = self.model(input_tensor).item()
         return risk_score
 
-    def generate_risk_matrix(self, risk_score, save_path='ui/assets/m3_decision_matrix.png'):
+    def generate_risk_matrix(self, risk_score, save_path='outputs/risk_matrix.png'):
         """构建经典的风险矩阵 (可能性 x 严重性)"""
         # 【中文字体设置】
         import matplotlib.font_manager as fm
@@ -106,6 +105,6 @@ class RiskManager:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
         print(f"✅ 风险矩阵图已保存至：{save_path}")
-        plt.close()
+        plt.show()
         
         return decision, risk_score

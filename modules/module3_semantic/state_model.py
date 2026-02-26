@@ -3,8 +3,7 @@ import random
 import matplotlib.pyplot as plt
 import numpy as np
 import os
-import matplotlib
-matplotlib.use('Agg') # 告诉程序在后台绘图，不要弹出那个白色的预览窗口
+
 class DrivingStateModel:
     def __init__(self):
         # 定义状态空间
@@ -50,7 +49,7 @@ class DrivingStateModel:
         ]
         return np.array(vector, dtype=np.float32)
 
-    def visualize_state(self, save_path='ui/assets/m3_state.png'):
+    def visualize_state(self, save_path='outputs/driving_state.png'):
         """可视化当前驾驶状态"""
         # 【中文字体设置】
         import matplotlib.font_manager as fm
@@ -93,7 +92,7 @@ class DrivingStateModel:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
         print(f"✅ 驾驶状态图已保存至：{save_path}")
-        plt.close()
+        plt.show()
         
         # 打印详细 JSON
         print("📋 当前状态详细信息:")
