@@ -1,3 +1,6 @@
+'''
+弃用
+'''
 # datasets/audio_dataset.py
 import os
 import torch
@@ -49,5 +52,6 @@ class AudioDataset(Dataset):
         if self.transform:
             waveform = self.transform(waveform.numpy())  # 转为 numpy 供特征提取器使用
             waveform = torch.from_numpy(waveform).float()
+
 
         return waveform
