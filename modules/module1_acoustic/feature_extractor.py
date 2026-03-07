@@ -1,4 +1,6 @@
 """
+弃用
+
 声学特征提取模块
 输入：干净音频段 (numpy array, 16kHz)
 输出：特征向量 (numpy array)
@@ -65,4 +67,5 @@ class FeatureExtractor:
             mfcc_mean,
             [cent_mean, flat_mean, high_ratio, energy_std]
         ])
+
         return features

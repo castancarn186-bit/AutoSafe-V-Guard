@@ -1,135 +1,119 @@
-# 声学安全主类	继承 BaseGuardModule，实现物理层安全检测主逻辑。
+"""
+modules/module_a_acoustic/detector.py
+声学物理层检测器（基于 RawNet2 端到端深度学习模型）
+继承 core.base_module.BaseDetector，实现 setup() 和 detect(ctx)
+使用简化版 AudioPreprocessor 进行归一化和长度调整。
+"""
 import os
 import numpy as np
 import torch
+import torch.nn.functional as F
 from core.base_module import BaseDetector
 from core.protocol import SystemContext, RiskReport
-
-from modules.module1_acoustic.audio_preprocessor import AudioPreprocessor
-from modules.module1_acoustic.feature_extractor import FeatureExtractor
-from modules.module1_acoustic.acoustic_anomaly_model import AnomalyModel
-from modules.module1_acoustic.acoustic_risk_normalizer import RiskNormalizer
+from .audio_preprocessor import AudioPreprocessor
+from .rawnet2_model import RawNet2
 
 
 class AcousticDetector(BaseDetector):
+    """
+    使用 RawNet2 预训练模型检测声学欺骗攻击（重放、合成等）。
+    """
     def __init__(self, config=None):
-        super().__init__(module_id="A")
-        self.config = config or {}
+        super().__init__(config)
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.model = None
         self.preprocessor = None
-        self.feature_extractor = None
-        self.anomaly_model = None
-        self.normalizer = None
+        # 模型期望的输入长度（样本点数），根据 RawNet2 默认设置
+        self.expected_length = self.config.get('expected_length', 64600)
+        # 风险阈值（可配置）
+        self.thresholds = self.config.get('thresholds', {'PASS': 0.3, 'CONFIRM': 0.6})
 
     def setup(self):
-        """初始化所有子模块，加载模型"""
-        # 预处理配置
-        target_sr = self.config.get('target_sr', 16000)
-        vad_aggressiveness = self.config.get('vad_aggressiveness', 2)
-        self.preprocessor = AudioPreprocessor(
-            target_sr=target_sr,
-            vad_aggressiveness=vad_aggressiveness
-        )
+        """加载 RawNet2 预训练权重并初始化预处理器"""
+        # 初始化预处理器（简单模式，仅归一化和长度调整）
+        self.preprocessor = AudioPreprocessor(target_sr=16000)
 
-        # 特征提取器
-        self.feature_extractor = FeatureExtractor(sr=target_sr)
-
-        # 加载异常检测模型
+        # 模型路径
         model_path = self.config.get(
             'model_path',
-            os.path.join(os.path.dirname(__file__), 'models', 'ocsvm.pkl')
+            os.path.join(os.path.dirname(__file__), 'models', 'rawnet2.pth')
         )
-
-        # =========================================================
-        # 🔥 架构师修复：去掉强行 raise 崩溃，改为优雅降级
-        # =========================================================
         if not os.path.exists(model_path):
-            self.logger.warning(f"⚠️ 找不到声学模型: {model_path}，模块 A 进入降级放行模式！")
-            self.anomaly_model = None
-        else:
-            self.anomaly_model = AnomalyModel(model_path)
+            self.logger.error(f"RawNet2 model file not found: {model_path}")
+            raise FileNotFoundError(f"RawNet2 model missing: {model_path}")
 
-        # 风险归一化器
-        norm_method = self.config.get('norm_method', 'sigmoid')
-        self.normalizer = RiskNormalizer(method=norm_method)
-
-        self.logger.info("AcousticDetector setup complete")
+        # 初始化模型并加载权重
+        self.model = RawNet2(pretrained_path=model_path)
+        self.model.to(self.device)
+        self.model.eval()
+        self.logger.info(f"RawNet2 model loaded from {model_path} to {self.device}")
 
     def detect(self, ctx: SystemContext) -> RiskReport:
         """
-        核心检测逻辑
-        ctx.audio_frame: numpy array, 原始音频块
+        核心检测逻辑。
+        ctx.audio_frame: 原始音频块 (numpy array, 16kHz 单声道)
         """
         audio = ctx.audio_frame
         if audio is None or len(audio) == 0:
             return RiskReport(
-                module_id=self.module_id,
                 risk_score=0.0,
                 suggestion="PASS",
                 reason="No audio input",
                 evidence={}
             )
 
-        # =========================================================
-        # 🔥 架构师修复：降级模式下，直接返回安全分，不执行模型推理
-        # =========================================================
-        if self.anomaly_model is None:
-            return RiskReport(
-                module_id=self.module_id,
-                risk_score=0.1,
-                suggestion="PASS",
-                reason="模型文件缺失，默认放行",
-                evidence={"fallback": True}
+        try:
+            # 1. 预处理：归一化、长度调整
+            processed_audio = self.preprocessor.process(
+                audio,
+                orig_sr=16000,               # 假设输入音频已是16kHz，但保留参数以备后续
+                target_length=self.expected_length
             )
 
-        try:
-            # 1. 预处理
-            clean_audio = self.preprocessor.process(audio)
-            if self.anomaly_model.model_type == 'sklearn':
-                features = self.feature_extractor.extract(clean_audio)
-                raw_score = self.anomaly_model.predict_risk(features)
-            else:  # pytorch
-                raw_score = self.anomaly_model.predict_risk(clean_audio)
+            # 2. 转换为 tensor 并添加 batch 和 channel 维度
+            tensor = torch.from_numpy(processed_audio).float().to(self.device)
+            tensor = tensor.unsqueeze(0).unsqueeze(0)  # (1, 1, samples)
 
-            # 2. 特征提取
-            features = self.feature_extractor.extract(clean_audio)
+            # 3. 模型推理
+            with torch.no_grad():
+                logits = self.model(tensor)           # (1, 2)
+                probs = F.softmax(logits, dim=-1)     # (1, 2)
+                # 假设类别索引：0=bonafide, 1=spoof
+                risk_score = probs[0, 1].item()       # spoof 概率作为风险分数
 
-            # 3. 异常评分
-            raw_score = self.anomaly_model.predict_risk(features)
-
-            # 4. 风险归一化
-            risk_score = self.normalizer.normalize(raw_score)
-
-            # 5. 决策建议
+            # 4. 生成建议
             suggestion = self._get_suggestion(risk_score)
 
-            # 6. 构建证据
+            # 5. 构建证据（可用于调试和可视化）
             evidence = {
-                "raw_score": raw_score,
-                "feature_norm": np.linalg.norm(features).item()
+                "spoof_prob": risk_score,
+                "bonafide_prob": probs[0, 0].item(),
+                "logits": logits.cpu().numpy().tolist(),
+                "input_length": len(audio)
             }
 
             return RiskReport(
-                module_id=self.module_id,
                 risk_score=risk_score,
                 suggestion=suggestion,
-                reason="Acoustic anomaly check",
+                reason="Acoustic spoofing detection with RawNet2",
                 evidence=evidence
             )
+
         except Exception as e:
             self.logger.exception("Error in acoustic detection")
+            # 发生异常时返回保守值（0.5）和 PASS 建议，避免系统崩溃
             return RiskReport(
-                module_id=self.module_id,
-                risk_score=0.5,  # 保守值
+                risk_score=0.5,
                 suggestion="PASS",
                 reason=f"Acoustic detection error: {str(e)}",
                 evidence={}
             )
 
-    def _get_suggestion(self, risk_score):
-        """根据风险分数给出建议"""
-        if risk_score < 0.3:
+    def _get_suggestion(self, risk_score: float) -> str:
+        """根据风险分数返回建议"""
+        if risk_score < self.thresholds['PASS']:
             return "PASS"
-        elif risk_score < 0.6:
+        elif risk_score < self.thresholds['CONFIRM']:
             return "CONFIRM"
         else:
             return "REJECT"
