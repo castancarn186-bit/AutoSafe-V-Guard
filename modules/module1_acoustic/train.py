@@ -1,4 +1,6 @@
 """
+弃用
+
 train.py
 统一训练脚本，支持：
 - scikit-learn 模型 (One-Class SVM, Isolation Forest)
@@ -125,4 +127,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
