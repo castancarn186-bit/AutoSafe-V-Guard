@@ -2,6 +2,7 @@
 modules/module_a_acoustic/detector.py
 声学物理层检测器（基于 RawNet2 端到端深度学习模型）
 继承 core.base_module.BaseDetector，实现 setup() 和 detect(ctx)
+使用简化版 AudioPreprocessor 进行归一化和长度调整。
 """
 import os
 import numpy as np
@@ -9,9 +10,8 @@ import torch
 import torch.nn.functional as F
 from core.base_module import BaseDetector
 from core.protocol import SystemContext, RiskReport
-
-# 假设 RawNet2 模型定义在同一个目录下的 rawnet2_model.py 中
-from rawnet2_model import RawNet2
+from .audio_preprocessor import AudioPreprocessor
+from .rawnet2_model import RawNet2
 
 
 class AcousticDetector(BaseDetector):
@@ -22,13 +22,18 @@ class AcousticDetector(BaseDetector):
         super().__init__(config)
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model = None
+        self.preprocessor = None
         # 模型期望的输入长度（样本点数），根据 RawNet2 默认设置
         self.expected_length = self.config.get('expected_length', 64600)
         # 风险阈值（可配置）
         self.thresholds = self.config.get('thresholds', {'PASS': 0.3, 'CONFIRM': 0.6})
 
     def setup(self):
-        """加载 RawNet2 预训练权重"""
+        """加载 RawNet2 预训练权重并初始化预处理器"""
+        # 初始化预处理器（简单模式，仅归一化和长度调整）
+        self.preprocessor = AudioPreprocessor(target_sr=16000)
+
+        # 模型路径
         model_path = self.config.get(
             'model_path',
             os.path.join(os.path.dirname(__file__), 'models', 'rawnet2.pth')
@@ -58,11 +63,15 @@ class AcousticDetector(BaseDetector):
             )
 
         try:
-            # 1. 预处理音频：归一化、长度调整
-            processed = self._preprocess(audio)
+            # 1. 预处理：归一化、长度调整
+            processed_audio = self.preprocessor.process(
+                audio,
+                orig_sr=16000,               # 假设输入音频已是16kHz，但保留参数以备后续
+                target_length=self.expected_length
+            )
 
             # 2. 转换为 tensor 并添加 batch 和 channel 维度
-            tensor = torch.from_numpy(processed).float().to(self.device)
+            tensor = torch.from_numpy(processed_audio).float().to(self.device)
             tensor = tensor.unsqueeze(0).unsqueeze(0)  # (1, 1, samples)
 
             # 3. 模型推理
@@ -99,29 +108,6 @@ class AcousticDetector(BaseDetector):
                 reason=f"Acoustic detection error: {str(e)}",
                 evidence={}
             )
-
-    def _preprocess(self, audio: np.ndarray) -> np.ndarray:
-        """
-        根据 RawNet2 要求进行预处理：
-        - 归一化到 [-1, 1]
-        - 固定长度（截断或填充）
-        """
-        # 归一化
-        max_val = np.max(np.abs(audio))
-        if max_val > 1e-8:
-            audio = audio / max_val
-        else:
-            audio = audio  # 全零音频保持原样
-
-        # 长度调整
-        target_len = self.expected_length
-        if len(audio) > target_len:
-            audio = audio[:target_len]
-        elif len(audio) < target_len:
-            pad_width = target_len - len(audio)
-            audio = np.pad(audio, (0, pad_width), mode='constant', constant_values=0)
-
-        return audio
 
     def _get_suggestion(self, risk_score: float) -> str:
         """根据风险分数返回建议"""
