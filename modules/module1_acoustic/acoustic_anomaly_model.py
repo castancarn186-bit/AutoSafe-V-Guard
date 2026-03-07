@@ -1,4 +1,6 @@
 """
+弃用
+
 acoustic_anomaly_model.py
 异常检测模型封装，支持：
 - scikit-learn 模型 (One-Class SVM, Isolation Forest) 通过 joblib 加载
@@ -197,3 +199,4 @@ class AnomalyModel:
 
         else:
             raise RuntimeError("Model not loaded properly")
+
