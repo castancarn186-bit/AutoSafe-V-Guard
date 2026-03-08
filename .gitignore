@@ -209,3 +209,15 @@ __marimo__/
 # --- V-Guard Project Specific ---
 data/*.db
 data/*.log
+
+.idea/
+__pycache__/
+*.pyc
+
+# 模型
+models/
+modules/*/models/
+ui/models/
+
+# 音频
+*.wav

@@ -1,4 +1,55 @@
-# finallog.py
+import os
+
+# --- 配置区：直接在这里改 ---
+# 你想要生成的模块文件夹名称
+TARGET_FOLDERS = ['modules/module2_ASR']
+OUTPUT_FILE = "modules_snapshot2.txt"
+IGNORE_EXTS = {
+    '.pth', '.pkl', '.h5', '.onnx', '.pb', '.tensor',  # 模型权重
+    '.wav', '.mp3', '.flac',                          # 音频
+    '.png', '.jpg', '.jpeg', '.gif',                  # 图片
+    '.pyc', '.pyo', '.pyd', '.exe', '.dll',           # 编译文件
+    '.db', '.sqlite', '.log'                          # 数据库与日志
+}
+
+
+def make_direct_snapshot():
+    file_count = 0
+    with open(OUTPUT_FILE, 'w', encoding='utf-8') as f_out:
+        for folder in TARGET_FOLDERS:
+            if not os.path.exists(folder):
+                print(f"⚠️ 找不到文件夹: {folder}，已跳过")
+                continue
+
+            for root, _, files in os.walk(folder):
+                if '__pycache__' in root: continue
+
+                for file in files:
+                    ext = os.path.splitext(file)[1].lower()
+                    if ext in IGNORE_EXTS: continue
+
+                    file_path = os.path.join(root, file)
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f_in:
+                            content = f_in.read()
+
+                        f_out.write(f"\n{'=' * 60}\nPATH: {file_path}\n{'=' * 60}\n\n{content}\n")
+                        file_count += 1
+                        print(f"[{file_count}] 已加入: {file_path}")
+                    except Exception as e:
+                        print(f"❌ 无法读取 {file_path}: {e}")
+
+    print(f"\n" + "—" * 40)
+    print(f"✅ 快照生成完毕！")
+    print(f"📂 目标文件夹: {', '.join(TARGET_FOLDERS)}")
+    print(f"📄 输出文件: {OUTPUT_FILE}")
+    print(f"🔢 本次共计包含 [ {file_count} ] 个代码文件")
+    print(f"—" * 40)
+
+
+if __name__ == "__main__":
+    make_direct_snapshot()
+'''
 import os
 
 
@@ -58,3 +109,4 @@ def dump_project():
 
 if __name__ == "__main__":
     dump_project()
+'''

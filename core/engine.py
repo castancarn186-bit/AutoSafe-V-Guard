@@ -1,4 +1,113 @@
 # core/engine.py
+# core/engine.py
+import asyncio
+import time
+import logging
+import librosa
+from core.protocol import SystemContext, RiskReport
+
+# 导入三大模块的检测器
+from modules.module1_acoustic.detector import AcousticDetector
+from modules.module2_ASR.detector import ASRDetector
+from modules.module3_semantic.detector import SemanticDetector
+
+
+class VGuardEngine:
+    def __init__(self):
+        self.logger = logging.getLogger("VGuard.Engine")
+
+        # 1. 实例化三大防线
+        self.m1 = AcousticDetector()
+        self.m2 = ASRDetector()
+        self.m3 = SemanticDetector()
+
+        # 初始化耗时模型
+        self.logger.info("正在初始化底层安全模型，请稍候...")
+        self.m1.setup()
+        # m2 (ASR) 和 m3 (Semantic) 如果有 setup 也在这里调用
+
+        # 融合权重 (答辩可解释的点)
+        self.weights = {"A": 0.35, "B": 0.25, "C": 0.40}
+
+    async def analyze_risk_pipeline(self, audio_path: str, speed: float) -> dict:
+        """
+        核心高并发防御管线
+        """
+        start_ts = time.perf_counter()
+
+        # ==========================================
+        # 1. 统一 I/O 降本：只加载一次音频进内存矩阵
+        # ==========================================
+        try:
+            # librosa 加载转为 16000Hz 单声道矩阵，满足 A 和 B 的共同要求
+            audio_matrix, _ = librosa.load(audio_path, sr=16000, mono=True)
+        except Exception as e:
+            self.logger.error(f"音频加载失败: {e}")
+            return {"total_risk": 1.0, "decision": "BLOCK", "reports": []}
+
+        # 构造系统上下文
+        ctx = SystemContext(
+            audio_frame=audio_matrix,  # 给 A 用
+            speed=speed
+        )
+
+        # ==========================================
+        # 2. 协程防腐层包装
+        # ==========================================
+        async def run_a():
+            # A 模块需要 ctx
+            return await asyncio.to_thread(self.m1.detect, ctx)
+
+        async def run_b():
+            # B 模块支持直接传 audio_matrix
+            return await asyncio.to_thread(self.m2.detect, audio_matrix)
+
+        async def run_c(asr_text: str):
+            # C 模块需要文本和上下文
+            # 注意：这需要在 B 模块运行完拿到文本后执行，或者如果车机前端直接给了文本，可并行。
+            # 假设我们需要等 B 拿到 text 再跑 C：
+            return await asyncio.to_thread(self.m3.detect, asr_text, {"speed": ctx.speed})
+
+        # ==========================================
+        # 3. 动态流水线调度 (异步并发)
+        # ==========================================
+        # 先并行跑 A 和 B (因为它们只依赖声音)
+        results_ab = await asyncio.gather(run_a(), run_b(), return_exceptions=True)
+        report_a = results_ab[0] if not isinstance(results_ab[0], Exception) else RiskReport("A", 0.0, "PASS",
+                                                                                             "崩溃降级")
+        report_b = results_ab[1] if not isinstance(results_ab[1], Exception) else RiskReport("B", 0.0, "PASS",
+                                                                                             "崩溃降级")
+
+        # 从 B 模块提取 ASR 识别出的文本 (成员 B 放在了 metadata 里)
+        extracted_text = "识别失败"
+        if hasattr(report_b, "metadata") and "text" in report_b.metadata:
+            extracted_text = report_b.metadata["text"]
+
+        # 再跑 C 模块 (依赖 B 的文本)
+        report_c = await run_c(extracted_text)
+
+        reports = [report_a, report_b, report_c]
+
+        # ==========================================
+        # 4. 融合决策
+        # ==========================================
+        total_risk = 0.0
+        for r in reports:
+            w = self.weights.get(r.module_id, 0.33)
+            total_risk += r.risk_score * w
+
+        decision = "BLOCK" if total_risk > 0.65 else "REVIEW" if total_risk > 0.35 else "PASS"
+        latency = round((time.perf_counter() - start_ts) * 1000, 2)
+
+        return {
+            "total_risk": total_risk,
+            "decision": decision,
+            "reports": reports,
+            "latency_ms": latency,
+            "asr_text": extracted_text  # 将提取的文本返给 UI
+        }
+'''
+旧版本接入法，使得app臃肿
 import os
 import time
 import logging
@@ -17,7 +126,7 @@ class VGuardEngine:
 
         # 1. 初始化三大标准探测器
         self.m1 = AcousticDetector()
-        self.m2 = ASRDetector()
+        self.m2 = ASRDetector(model_size="base")
         self.m3 = SemanticDetector()
 
         # 执行模块A的初始化（如加载降级模型）
@@ -115,6 +224,7 @@ class VGuardEngine:
             "latency_ms": latency
         }
 
+'''
 '''
 #仅接入第二部分
 import os

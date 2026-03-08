@@ -4,7 +4,7 @@ from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 from pydantic import BaseModel
 import logging
-from asr_engine import ASRResult
+from modules.module2_ASR.asr_engine import ASRResult
 
 logger = logging.getLogger(__name__)
 

@@ -18,16 +18,22 @@ class AcousticDetector(BaseDetector):
     """
     使用 RawNet2 预训练模型检测声学欺骗攻击（重放、合成等）。
     """
+
     def __init__(self, config=None):
-        super().__init__(config)
+        # 1. 修正父类调用：BaseDetector 只需要 module_id "A"
+        super().__init__(module_id="A")
+
+        # 2. 核心修正：显式将传入的 config 保存到实例中
+        # 这样下面的 self.config.get 才能找到变量
+        self.config = config if config is not None else {}
+
+        # --- 以下是成员 A 的原始代码，保持原样 ---
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model = None
         self.preprocessor = None
-        # 模型期望的输入长度（样本点数），根据 RawNet2 默认设置
+        # 现在访问 self.config 就不会报错了
         self.expected_length = self.config.get('expected_length', 64600)
-        # 风险阈值（可配置）
         self.thresholds = self.config.get('thresholds', {'PASS': 0.3, 'CONFIRM': 0.6})
-
     def setup(self):
         """加载 RawNet2 预训练权重并初始化预处理器"""
         # 初始化预处理器（简单模式，仅归一化和长度调整）
@@ -93,6 +99,7 @@ class AcousticDetector(BaseDetector):
             }
 
             return RiskReport(
+                module_id="A",
                 risk_score=risk_score,
                 suggestion=suggestion,
                 reason="Acoustic spoofing detection with RawNet2",
@@ -103,6 +110,7 @@ class AcousticDetector(BaseDetector):
             self.logger.exception("Error in acoustic detection")
             # 发生异常时返回保守值（0.5）和 PASS 建议，避免系统崩溃
             return RiskReport(
+                module_id="A",
                 risk_score=0.5,
                 suggestion="PASS",
                 reason=f"Acoustic detection error: {str(e)}",

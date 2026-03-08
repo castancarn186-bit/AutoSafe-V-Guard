@@ -10,8 +10,8 @@ from typing import Dict, Optional
 from dataclasses import dataclass
 import librosa
 
-from asr_engine import create_asr_engine
-from confidence_analyzer import ConfidenceAnalyzer
+from modules.module2_ASR.asr_engine import create_asr_engine
+from modules.module2_ASR.confidence_analyzer import ConfidenceAnalyzer
 
 # VAD导入
 try:
@@ -25,7 +25,7 @@ except ImportError:
 @dataclass
 class OptimizedConfig:
     """极致优化配置"""
-    model_size: str = "tiny"  # 保持tiny最快
+    model_size: str = "base"  # 保持tiny最快
     enable_vad: bool = True
     vad_aggressiveness: int = 3
     enable_stability: bool = False  # 关闭稳定性测试！
@@ -80,7 +80,7 @@ class VADProcessor:
         return result
 
 
-class OptimizedASRRiskModel:
+class ASRRiskModel:
     """极致优化版风险模型"""
 
     def __init__(self, config: Optional[OptimizedConfig] = None):
