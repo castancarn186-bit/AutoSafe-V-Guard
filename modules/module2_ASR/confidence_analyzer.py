@@ -205,94 +205,27 @@ class ConfidenceAnalyzer:
 
         return float(entropy)
 
-    def _calc_confidence_score(self, probs: List[float]) -> float:
-        """
-        计算综合置信度分数 - 修复版
-
-        修复问题：
-        1. 避免概率为1.0导致的过度乐观
-        2. 考虑概率分布的合理性
-        3. 加入惩罚项
-
-        算法：
-        - 平均概率 (40%) - 越高越好，但上限0.95
-        - 低置信度比例 (30%) - 越低越好
-        - 概率方差 (20%) - 需要合理范围，太小或太大都不好
-        - 概率熵 (10%) - 需要合理范围，太小或太大都不好
-        """
+        def _calc_confidence_score(self, probs: List[float]) -> float:
+        """修复版置信度计算"""
         if not probs:
             return 0.0
 
-        # 1. 平均概率指标 (权重0.4)
+        # 1. 平均概率
         avg_prob = np.mean(probs)
-        # 避免过度乐观：如果平均概率 > 0.95，可能有问题
-        if avg_prob > 0.95:
-            # 检查是否所有概率都接近1.0
-            if all(p > 0.99 for p in probs):
-                # 这很可能是异常情况，降低置信度
-                avg_prob_score = 0.5
-            else:
-                avg_prob_score = 0.95
-        else:
-            avg_prob_score = avg_prob
 
-        # 2. 低置信度比例指标 (权重0.3)
-        low_conf_ratio = self._calc_low_conf_ratio(probs)
-        low_conf_score = 1.0 - low_conf_ratio
+        # 2. 熵（不确定性）
+        probs_norm = np.array(probs) / sum(probs)
+        entropy = -np.sum(probs_norm * np.log(probs_norm + 1e-10))
+        max_entropy = np.log(len(probs))
+        entropy_ratio = entropy / max_entropy if max_entropy > 0 else 1
 
-        # 3. 概率方差指标 (权重0.2)
-        prob_variance = np.var(probs) if len(probs) > 1 else 0.0
+        # 3. 方差（一致性）
+        variance = np.var(probs)
 
-        # 方差需要在合理范围内
-        # 太小（<0.01）：可能所有概率都接近1.0或0.0
-        # 太大（>0.25）：概率分布过于分散
-        if prob_variance < 0.01:
-            # 检查是否所有概率都接近1.0
-            if all(p > 0.99 for p in probs):
-                variance_score = 0.3  # 异常情况
-            elif all(p < 0.01 for p in probs):
-                variance_score = 0.2  # 全低概率
-            else:
-                variance_score = 0.5  # 可能是有效的小方差
-        elif prob_variance > 0.25:
-            variance_score = max(0.0, 1.0 - prob_variance)
-        else:
-            # 理想方差范围 [0.01, 0.25]
-            # 0.1 附近最优
-            variance_score = 1.0 - abs(prob_variance - 0.1) * 2
-            variance_score = max(0.0, min(1.0, variance_score))
+        # 4. 综合计算
+        confidence = avg_prob * (1 - entropy_ratio * 0.3) * (1 - variance * 0.3)
 
-        # 4. 概率熵指标 (权重0.1)
-        prob_entropy = self._calc_entropy(probs)
-
-        # 熵也需要在合理范围内
-        # 太小（<0.1）：概率分布过于集中
-        # 太大（>2.0）：概率分布过于分散
-        if prob_entropy < 0.1:
-            if all(p > 0.99 for p in probs):
-                entropy_score = 0.3  # 异常情况
-            elif all(p < 0.01 for p in probs):
-                entropy_score = 0.2  # 全低概率
-            else:
-                entropy_score = 0.5
-        elif prob_entropy > 2.0:
-            entropy_score = max(0.0, 1.0 - (prob_entropy - 2.0))
-        else:
-            # 理想熵范围 [0.1, 2.0]
-            # 1.0 附近最优
-            entropy_score = 1.0 - abs(prob_entropy - 1.0) * 0.5
-            entropy_score = max(0.0, min(1.0, entropy_score))
-
-        # 加权综合
-        weights = [0.4, 0.3, 0.2, 0.1]
-        scores = [avg_prob_score, low_conf_score, variance_score, entropy_score]
-
-        confidence_score = sum(w * s for w, s in zip(weights, scores))
-
-        # 确保在[0,1]范围内
-        confidence_score = max(0.0, min(1.0, confidence_score))
-
-        return confidence_score
+        return max(0.1, min(0.95, confidence))
 
     def _create_error_metrics(self, reason: str = "") -> ConfidenceMetrics:
         """创建错误指标"""
@@ -312,4 +245,5 @@ class ConfidenceAnalyzer:
 
     def analyze_batch(self, asr_results: List[ASRResult]) -> List[ConfidenceMetrics]:
         """批量分析"""
+
         return [self.analyze(result) for result in asr_results]
