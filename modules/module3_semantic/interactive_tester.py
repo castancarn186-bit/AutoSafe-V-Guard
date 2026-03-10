@@ -13,7 +13,7 @@ MODELS_DIR = CURRENT_DIR / 'models'
 if str(CURRENT_DIR) not in sys.path: sys.path.insert(0, str(CURRENT_DIR))
 if str(MODELS_DIR) not in sys.path: sys.path.insert(0, str(MODELS_DIR))
 
-from core.protocol import SemanticInput, VehicleContext, Language, WeatherCondition, RiskLevel
+from modules.module3_semantic.core.protocol import SemanticInput, VehicleContext, Language, WeatherCondition, RiskLevel
 from models.reasoning import SemanticSafetyEngine
 
 class VGuardIntelligentTerminal:
@@ -21,11 +21,11 @@ class VGuardIntelligentTerminal:
         print("=== 初始化 V-Guard 全语义解析交互终端 ===")
         self.engine = SemanticSafetyEngine()
         
-        self.model_name = "Qwen/Qwen2.5-0.5B-Instruct"
-        print(f"[*] 正在加载 LLM 语义解析模型: {self.model_name}...")
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+        self.model_path = "./models/Qwen/Qwen2.5-0.5B-Instruct"
+        print(f"[*] 正在加载 LLM 语义解析模型: {self.model_path}...")
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)
         self.llm = AutoModelForCausalLM.from_pretrained(
-            self.model_name, 
+            self.model_path,
             torch_dtype="auto", 
             device_map="auto"
         )

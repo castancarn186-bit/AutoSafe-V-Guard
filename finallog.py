@@ -2,14 +2,14 @@ import os
 
 # --- 配置区：直接在这里改 ---
 # 你想要生成的模块文件夹名称
-TARGET_FOLDERS = ['modules/module2_ASR']
-OUTPUT_FILE = "modules_snapshot2.txt"
+TARGET_FOLDERS = ['modules/module3_semantic']
+OUTPUT_FILE = "module3.txt"
 IGNORE_EXTS = {
     '.pth', '.pkl', '.h5', '.onnx', '.pb', '.tensor',  # 模型权重
     '.wav', '.mp3', '.flac',                          # 音频
     '.png', '.jpg', '.jpeg', '.gif',                  # 图片
     '.pyc', '.pyo', '.pyd', '.exe', '.dll',           # 编译文件
-    '.db', '.sqlite', '.log'                          # 数据库与日志
+    '.db', '.sqlite', '.log','.jsonl','.json','.md' ,'.csv'  ,'.gitignore','.TAG', '.index'             # 数据库与日志
 }
 
 
@@ -22,7 +22,7 @@ def make_direct_snapshot():
                 continue
 
             for root, _, files in os.walk(folder):
-                if '__pycache__' in root: continue
+                if '.pytest_cache' in root: continue
 
                 for file in files:
                     ext = os.path.splitext(file)[1].lower()
@@ -85,7 +85,7 @@ def dump_project():
         for root, dirs, files in os.walk(dir_path):
             for file in files:
                 # 排除编译缓存和无关文件
-                if file.endswith(('.py', '.json')) and '__pycache__' not in root:
+                if file.endswith(('.py')) and '__pycache__' not in root:
                     file_path = os.path.join(root, file)
                     rel_path = os.path.relpath(file_path, root_dir)
 

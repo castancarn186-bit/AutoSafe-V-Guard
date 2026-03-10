@@ -29,7 +29,7 @@ class RealConfidenceDistribution:
         plt.rcParams['axes.unicode_minus'] = False
 
         # 创建ASR引擎（使用tiny模型更快）
-        self.engine = create_asr_engine(model_size="tiny", device="cpu")
+        self.engine = create_asr_engine(model_size="base", device="cpu")
         self.analyzer = ConfidenceAnalyzer(low_conf_threshold=0.5)
 
         self.data_points = []

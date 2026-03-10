@@ -34,28 +34,20 @@ class IntentCategory(str, Enum):
 # --- 数据契约类 (引入强大的约束) ---
 
 class VehicleContext(BaseModel):
-    """车况上下文：加入了边界约束，防止脏数据"""
-    speed: float = Field(..., ge=0, le=300, description="当前车速 km/h (0-300)")
-    speed_limit: float = Field(..., ge=10, le=120, description="道路限速")
-    gear: str = Field(..., pattern="^(P|R|N|D)$", description="档位限制为PRND")
-    weather: WeatherCondition
-    traffic_density: str = Field(..., pattern="^(low|medium|high)$")
-    has_pedestrians: bool = Field(default=False, description="周围是否有行人")
-    window_open: bool = Field(default=False, description="当前车窗是否开启")
-    
-    @field_validator('speed')
-    def check_speed_and_gear(cls, v, info):
-        # 联动校验：如果是P档，速度必须是0
-        if 'gear' in info.data and info.data['gear'] == 'P' and v > 0:
-            raise ValueError("P档下车速必须为0")
-        return v
+    """车况上下文：统一使用带默认值的版本，防止缺失字段报错"""
+    speed: float = Field(default=0.0, ge=0, le=300)
+    speed_limit: float = Field(default=120.0, ge=10, le=120)
+    gear: str = Field(default="P", pattern="^(P|R|N|D)$")
+    weather: WeatherCondition = WeatherCondition.SUNNY
+    traffic_density: str = Field(default="low", pattern="^(low|medium|high)$")
+    has_pedestrians: bool = Field(default=False)
 
 class SemanticInput(BaseModel):
-    """语义层输入：ASR的输出和当前车况的集合"""
+    """语义层输入"""
     session_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    text: str = Field(..., min_length=1, max_length=500, description="ASR文本")
-    language: Language
-    context: VehicleContext
+    text: str = Field(..., min_length=1, max_length=500)
+    language: Language = Language.ZH
+    context: VehicleContext # 此时它将准确引用上面定义的 VehicleContext
     timestamp: float = Field(default_factory=time.time)
 
 class RiskReport(BaseModel):
@@ -66,11 +58,3 @@ class RiskReport(BaseModel):
     intent_category: IntentCategory
     matched_vector_id: Optional[str] = Field(None, description="命中的HNSW向量节点ID，若是深度学习推理则为None")
 
-class VehicleContext(BaseModel):
-    speed: float = Field(default=0.0, ge=0, le=300)
-    # 👈 修改：增加默认值，防止因为缺失该字段报错
-    speed_limit: float = Field(default=120.0, ge=10, le=120) 
-    gear: str = Field(default="P", pattern="^(P|R|N|D)$")
-    weather: WeatherCondition = WeatherCondition.SUNNY
-    traffic_density: str = Field(default="low", pattern="^(low|medium|high)$")
-    has_pedestrians: bool = Field(default=False)

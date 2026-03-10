@@ -10,8 +10,8 @@ from typing import Dict, Optional
 from dataclasses import dataclass
 import librosa
 
-from asr_engine import create_asr_engine
-from confidence_analyzer import ConfidenceAnalyzer
+from modules.module2_ASR.asr_engine import create_asr_engine
+from modules.module2_ASR.confidence_analyzer import ConfidenceAnalyzer
 
 # VAD导入
 try:

@@ -13,9 +13,9 @@ PROJECT_ROOT = CURRENT_DIR.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from models.risk_net import RiskNet
-from models.embeddings import FeatureExtractor
-from vector_db.hnsw_manager import HNSWManager
+from modules.module3_semantic.models.risk_net import RiskNet
+from modules.module3_semantic.models.embeddings import FeatureExtractor
+from modules.module3_semantic.models.vector_db.hnsw_manager import HNSWManager
 
 class HybridVGuardDataset(Dataset):
     def __init__(self, jsonl_path, extractor, vdb_manager):

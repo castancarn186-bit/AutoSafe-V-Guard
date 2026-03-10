@@ -8,9 +8,9 @@ import os
 import numpy as np
 import torch
 import torch.nn.functional as F
-from core.base_module import BaseDetector
-from core.protocol import SystemContext, RiskReport
+from core.protocol import SystemContext, DetectionResult
 from .audio_preprocessor import AudioPreprocessor
+from core.base_module import BaseDetector, DetectionResult
 from .rawnet2_model import RawNet2
 
 
@@ -42,8 +42,9 @@ class AcousticDetector(BaseDetector):
         # 模型路径
         model_path = self.config.get(
             'model_path',
-            os.path.join(os.path.dirname(__file__), 'models', 'rawnet2.pth')
+            r"D:\essay of crypto\AutoSafe-V-Guard\models\rawnet2\rawnet2.pth"
         )
+
         if not os.path.exists(model_path):
             self.logger.error(f"RawNet2 model file not found: {model_path}")
             raise FileNotFoundError(f"RawNet2 model missing: {model_path}")
@@ -54,14 +55,14 @@ class AcousticDetector(BaseDetector):
         self.model.eval()
         self.logger.info(f"RawNet2 model loaded from {model_path} to {self.device}")
 
-    def detect(self, ctx: SystemContext) -> RiskReport:
+    def detect(self, ctx: SystemContext) -> DetectionResult:
         """
         核心检测逻辑。
         ctx.audio_frame: 原始音频块 (numpy array, 16kHz 单声道)
         """
         audio = ctx.audio_frame
         if audio is None or len(audio) == 0:
-            return RiskReport(
+            return DetectionResult(
                 risk_score=0.0,
                 suggestion="PASS",
                 reason="No audio input",
@@ -98,12 +99,12 @@ class AcousticDetector(BaseDetector):
                 "input_length": len(audio)
             }
 
-            return RiskReport(
+            return DetectionResult(
                 module_id="A",
                 risk_score=risk_score,
-                suggestion=suggestion,
+                decision=suggestion,
                 reason="Acoustic spoofing detection with RawNet2",
-                evidence=evidence
+                metadata=evidence
             )
 
         except Exception as e:
@@ -112,9 +113,9 @@ class AcousticDetector(BaseDetector):
             return RiskReport(
                 module_id="A",
                 risk_score=0.5,
-                suggestion="PASS",
+                decision="PASS",
                 reason=f"Acoustic detection error: {str(e)}",
-                evidence={}
+                metadata={}
             )
 
     def _get_suggestion(self, risk_score: float) -> str:

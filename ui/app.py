@@ -1,12 +1,18 @@
 import flet as ft
 import asyncio
 import os
+import sys
 import wave
 import pyaudio
 import time
 from datetime import datetime
 import numpy as np  # 新增：用于计算音量
 import collections  # 新增：用于循环缓冲区
+
+# 添加项目根目录到 Python 路径
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 # 核心架构导入
 from core.state import shared_state
@@ -242,7 +248,32 @@ async def main_ui(page: ft.Page):
     async def audio_monitor_task():
         CHUNK, RATE = 1024, 16000
         p = pyaudio.PyAudio()
-        stream = p.open(format=pyaudio.paInt16, channels=1, rate=RATE, input=True,input_device_index=4, frames_per_buffer=CHUNK)
+        
+        # 自动选择可用的输入设备
+        input_device_index = None
+        try:
+            # 尝试获取默认输入设备
+            default_input = p.get_default_input_device_info()
+            input_device_index = default_input['index']
+            print(f"✅ 使用默认麦克风设备：{default_input['name']} (Index: {input_device_index})")
+        except Exception as e:
+            # 如果没有默认设备，尝试第一个可用的输入设备
+            for i in range(p.get_device_count()):
+                try:
+                    device_info = p.get_device_info_by_index(i)
+                    if device_info['maxInputChannels'] > 0:
+                        input_device_index = i
+                        print(f"✅ 使用麦克风设备：{device_info['name']} (Index: {input_device_index})")
+                        break
+                except:
+                    continue
+        
+        # 如果还是找不到设备，使用 None（可能会失败但有提示）
+        if input_device_index is None:
+            print("❌ 未找到可用的麦克风设备！请检查麦克风连接。")
+            return
+        
+        stream = p.open(format=pyaudio.paInt16, channels=1, rate=RATE, input=True, input_device_index=input_device_index, frames_per_buffer=CHUNK)
         last_v=0.0
         try:
             while True:

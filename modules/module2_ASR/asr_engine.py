@@ -2,6 +2,7 @@
 
 import numpy as np
 import time
+import os
 from typing import Dict, List, Optional, Union, Any
 from dataclasses import dataclass, field
 from pydantic import BaseModel
@@ -31,14 +32,14 @@ class ASRResult(BaseModel):
 @dataclass
 class ASRConfig:
     """ASR引擎配置 - 简化版本"""
-    model_size: str = "tiny"  # tiny, base, small
+    model_size: str = "base"  # tiny, base, small
     device: str = "cpu"  # cpu, cuda
     compute_type: str = "int8"  # int8, float16, float32
     language: Optional[str] = None  # 指定语言，如 "zh", "en"
     beam_size: int = 1  # 减小beam size以提高稳定性
     temperature: float = 0.0  # 确定性输出
-    enable_timestamps: bool = False  # 是否启用时间戳（简化版先关闭）
-    enable_vad: bool = False  # 是否启用VAD（简化版先关闭）
+    enable_timestamps: bool = True  # 是否启用时间戳（简化版先关闭）
+    enable_vad: bool = True  # 是否启用VAD（简化版先关闭）
 
 
 # ==================== 音频预处理工具 ====================
@@ -117,14 +118,28 @@ class ASREngine:
             # 动态导入，避免不必要的依赖
             from faster_whisper import WhisperModel
 
+
+            LOCAL_MODEL_PATHS = {
+                "tiny": r"D:\essay of crypto\AutoSafe-V-Guard\models\whisper\models--Systran--faster-whisper-tiny\snapshots\d90ca5fe260221311c53c58e660288d3deb8d356",
+                "base": r"D:\essay of crypto\AutoSafe-V-Guard\models\whisper\models--Systran--faster-whisper-base\snapshots\ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66",
+            }
+
+            model_path = LOCAL_MODEL_PATHS.get(self.config.model_size, self.config.model_size)
+            
+            # 检查本地模型是否存在
+
+            if not os.path.exists(model_path):
+                logger.error(f"本地模型路径不存在：{model_path}")
+                raise FileNotFoundError(f"Whisper 模型文件缺失：{model_path}")
+            
             # 简化模型加载参数
             self.model = WhisperModel(
-                model_size_or_path=self.config.model_size,
-                device=self.config.device,
-                compute_type=self.config.compute_type,
-                download_root="./models",
-                local_files_only=False
-            )
+             model_size_or_path=model_path,
+             device=self.config.device,
+               compute_type=self.config.compute_type,
+            download_root=None,
+            local_files_only=True  # 强制只使用本地文件
+          )
 
             logger.info(f"✓ 模型加载完成！设备: {self.config.device}")
 
@@ -336,7 +351,7 @@ class ASREngine:
 
 # ==================== 工厂函数 ====================
 def create_asr_engine(
-        model_size: str = "tiny",
+        model_size: str = "base",
         device: str = "cpu",
         compute_type: str = "int8",
         **kwargs

@@ -1,64 +1,89 @@
 # modules/module3_semantic/detector.py
 import time
 import os
+import logging
 from core.base_module import BaseDetector, DetectionResult
 
-# =========================================================
-# 🏆 架构级规范修改：使用绝对路径导入成员 C 的算法库
-# 直接精确到 src 文件夹，彻底抛弃 sys.path 补丁
-# =========================================================
-from modules.module3_semantic.semantic_lib import SemanticLibrary
-from modules.module3_semantic.state_model import DrivingStateModel
-from modules.module3_semantic.risk_assessment import RiskManager
+# 💡 关键：引入模块 C 内部的模型
+from modules.module3_semantic.core.protocol import SemanticInput, VehicleContext, Language, WeatherCondition
+from modules.module3_semantic.models.reasoning import SemanticSafetyEngine
 
 
 class SemanticDetector(BaseDetector):
     def __init__(self):
         super().__init__(module_id="C")
+        self.logger = logging.getLogger("VGuard.ModuleC")
+        try:
+            # 实例化最强大脑
+            self.engine = SemanticSafetyEngine()
+            self.logger.info("SemanticSafetyEngine (RAG+DeepLearning) 加载成功")
+        except Exception as e:
+            self.logger.error(f"语义引擎加载失败: {e}")
+            self.engine = None
 
-        # 获取项目根目录，以便准确定位 semantic_model 文件夹
-        # __file__ 是 detector.py 的路径 (modules/module3_semantic/detector.py)
-        ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        model_path = os.path.join(ROOT_DIR, "modules", "semantic_model")
-
-        # 1. 加载语义库
-        self.lib = SemanticLibrary(model_name=model_path)
-
-        # 2. 加载状态模型与风险管理器
-        self.state_model = DrivingStateModel()
-        self.risk_mgr = RiskManager(input_dim=16)  # 源码定义为 16 维
-
-    def detect(self, data: str, context: dict = None) -> DetectionResult:
+    def detect(self, text: str, context: dict = None) -> DetectionResult:
         """
-        data: ASR 识别出的文本
-        context: 驾驶上下文，例如 {'speed': 80, 'gear': 'D'}
+        text: ASR 识别出的文本
+        context: 包含 speed, gear, weather 等字段的字典
         """
         start_time = time.perf_counter()
+        context = context or {}
+
+        if self.engine is None:
+            return DetectionResult("C", 0.5, "REVIEW", "语义引擎未就绪")
 
         try:
-            # 1. 语义特征提取
-            standard_cmd, _, _ = self.lib.match_intent(str(data))
-            cmd_embedding = self.lib.model.encode([standard_cmd])[0]
+            # 🚀 适配层：手动清洗数据，确保符合 C 模块内部的 Pydantic 校验 (cite: 801, 803)
+            speed_val = float(context.get("speed", 0.0))
+            weather_str = context.get("weather", "sunny").lower()
 
-            # 2. 驾驶状态向量化
-            self.state_model.update_from_sensors(context or {})
-            state_vector = self.state_model.get_state_vector()
+            # 映射天气枚举
+            weather_enum = WeatherCondition.SUNNY
+            if "rain" in weather_str:
+                weather_enum = WeatherCondition.RAINY
+            elif "fog" in weather_str:
+                weather_enum = WeatherCondition.FOGGY
+            elif "snow" in weather_str:
+                weather_enum = WeatherCondition.SNOWY
 
-            # 3. 风险融合评估
-            input_tensor = self.risk_mgr.prepare_input(cmd_embedding, state_vector)
-            risk_score = self.risk_mgr.evaluate(input_tensor)
+            # 1. 构造内部 VehicleContext 对象
+            # 注意：补齐所有必填字段，防止 Pydantic 报错
+            veh_ctx = VehicleContext(
+                speed=speed_val,
+                speed_limit=float(context.get("speed_limit", 120.0)),
+                gear=context.get("gear", "D" if speed_val > 0 else "P"),
+                weather=weather_enum,
+                traffic_density=context.get("traffic_density", "low"),
+                has_pedestrians=bool(context.get("has_pedestrians", False))
+            )
 
-            # 4. 判定决策 (DENY -> BLOCK, ALLOW -> PASS)
-            raw_decision, _ = self.risk_mgr.generate_risk_matrix(risk_score)
-            decision = "BLOCK" if raw_decision == "DENY" else "PASS"
+            # 2. 构造语义输入
+            sem_input = SemanticInput(
+                text=text,
+                language=Language.ZH,
+                context=veh_ctx
+            )
 
+            # 3. 核心推理 (cite: 786)
+            report = self.engine.evaluate(sem_input)
+
+            # 4. 映射决策逻辑
+            decision_map = {"SAFE": "PASS", "WARNING": "REVIEW", "DANGER": "BLOCK"}
+            decision = decision_map.get(report.level.value, "PASS")
+
+            latency = (time.perf_counter() - start_time) * 1000
+
+            # 🚀 返回全系统统一协议
             return DetectionResult(
                 module_id=self.module_id,
-                risk_score=float(risk_score),
+                risk_score=float(report.risk_score),
                 decision=decision,
-                reason=f"意图: {standard_cmd} | 状态校验" if decision == "PASS" else f"非法意图: {standard_cmd}",
-                latency_ms=round((time.perf_counter() - start_time) * 1000, 2),
-                metadata={"cmd": standard_cmd, "speed": context.get('speed', 0)}
+                reason=report.reason,
+                latency_ms=round(latency, 2),
+                metadata={"category": report.intent_category.value}
             )
+
         except Exception as e:
-            return DetectionResult(self.module_id, 1.0, "BLOCK", f"语义模块异常: {str(e)}")
+            self.logger.error(f"Semantic 模块崩溃: {e}")
+            # 语义层是最后一道防线，崩溃时必须给高分并建议 BLOCK
+            return DetectionResult(self.module_id, 0.9, "BLOCK", f"语义分析异常: {str(e)}")

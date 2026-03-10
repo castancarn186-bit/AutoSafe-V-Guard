@@ -205,8 +205,8 @@ class ConfidenceAnalyzer:
 
         return float(entropy)
 
-        def _calc_confidence_score(self, probs: List[float]) -> float:
-        """修复版置信度计算"""
+    def _calc_confidence_score(self, probs: List[float]) -> float:
+
         if not probs:
             return 0.0
 

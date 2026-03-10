@@ -12,15 +12,6 @@ PROJECT_ROOT = CURRENT_DIR.parent                  # 退回上一级，定位到
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-# 引入核心数据契约
-from core.protocol import SemanticInput, RiskReport, RiskLevel, IntentCategory
-
-# 引入子模块 (因为项目根目录已经加入路径，所以可以直接从根目录下的文件夹导入)
-from models.embeddings import FeatureExtractor
-from models.risk_net import RiskNet
-# 注意：确保你的 vector_db 文件夹也在 gemini 根目录下
-from vector_db.hnsw_manager import HNSWManager
-
 # 动态路径设置：兼容 core 和 modules
 CURRENT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = CURRENT_DIR.parent.parent
@@ -28,11 +19,11 @@ sys.path.append(str(PROJECT_ROOT))
 sys.path.append(str(CURRENT_DIR))
 
 # 导入核心数据协议 (假设你在 core/protocol.py 中定义了这些)
-from core.protocol import SemanticInput, RiskReport, RiskLevel, IntentCategory
+from modules.module3_semantic.core.protocol import SemanticInput, RiskReport, RiskLevel, IntentCategory
 
 # 导入子模块
-from models.embeddings import FeatureExtractor
-from models.risk_net import RiskNet
+from modules.module3_semantic.models.embeddings import FeatureExtractor
+from modules.module3_semantic.models.risk_net import RiskNet
 from vector_db.hnsw_manager import HNSWManager
 
 class SemanticSafetyEngine:

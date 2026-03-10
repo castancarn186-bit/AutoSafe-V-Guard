@@ -2,24 +2,34 @@
 import torch
 import numpy as np
 from sentence_transformers import SentenceTransformer
+import os
 
 class FeatureExtractor:
-    def __init__(self, model_name: str = 'paraphrase-multilingual-MiniLM-L12-v2'):
+   def __init__(self, model_path=None):
         """
-        初始化多语言文本编码器，支持中英双语指令的降维
+      初始化多语言文本编码器，支持中英双语指令的降维
         """
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        print(f"[*] 加载深度特征提取模型 [{model_name}] on {self.device}...")
         
-        self.text_encoder = SentenceTransformer(model_name, device=self.device)
+        # 默认使用 modules/semantic_model 目录（绝对路径）
+        if model_path is None:
+           model_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'semantic_model'))
+        
+        print(f"[*] 加载深度特征提取模型 [{model_path}] on {self.device}...")
+        
+       # 检查路径是否存在
+        if not os.path.exists(model_path):
+          raise FileNotFoundError(f"找不到模型目录：{model_path}")
+      
+        self.text_encoder = SentenceTransformer(model_path, device=self.device)
         self.text_dim = self.text_encoder.get_sentence_embedding_dimension() # 通常为 384 维
-        self.context_dim = 10 # 物理车况特征维度
+        self.context_dim = 10
 
-    def encode_text(self, texts: list[str]) -> np.ndarray:
+   def encode_text(self, texts: list[str]) -> np.ndarray:
         """批量提取文本的高维语义特征"""
         return self.text_encoder.encode(texts, convert_to_numpy=True)
 
-    def encode_context(self, context: dict, param: float = None) -> np.ndarray:
+   def encode_context(self, context: dict, param: float = None) -> np.ndarray:
         """
         将物理车况（速度、档位、天气等）编码为连续的浮点特征张量
         """

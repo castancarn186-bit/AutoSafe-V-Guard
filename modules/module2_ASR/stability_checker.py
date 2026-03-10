@@ -76,7 +76,7 @@ class StabilityChecker:
             self.engine = asr_engine
             self.own_engine = False
         else:
-            self.engine = create_asr_engine(model_size="tiny", device="cpu")
+            self.engine = create_asr_engine(model_size="base", device="cpu")
             self.own_engine = True
 
     def check_stability(self,

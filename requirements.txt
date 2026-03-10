@@ -1,4 +1,4 @@
-# 前端UI框架
+# 前端 UI 框架
 flet>=0.21.0
 # 数据验证与结构
 pydantic>=2.5.0
@@ -8,7 +8,13 @@ numpy>=1.24.0
 # 提取梅尔频谱、检测声学特征
 librosa>=0.10.1
 soundfile>=0.12.1
-# AI推理引擎
+# AI 推理引擎
 onnxruntime>=1.16.0
 # 打包工具
 pyinstaller>=6.3.0
+# 音频录制与播放
+pyaudio>=0.2.13
+# VAD 语音活动检测
+webrtcvad>=2.0.10
+# ASR 语音识别
+openai-whisper>=20231117
