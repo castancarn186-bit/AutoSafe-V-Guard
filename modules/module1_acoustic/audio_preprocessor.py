@@ -1,4 +1,6 @@
 """
+弃用
+
 audio_preprocessor.py
 简化版预处理：仅包含归一化和长度调整，用于 RawNet2 模型。
 """
@@ -55,3 +57,4 @@ class AudioPreprocessor:
         audio = self.adjust_length(audio, target_length)
 
         return audio
+
