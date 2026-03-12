@@ -11,8 +11,8 @@ import torchaudio
 from core.base_module import BaseDetector
 from core.protocol import SystemContext, RiskReport
 
-# 从同目录的 aasist_model.py 导入 AASIST 类
-from .aasist_model import AASIST
+# 从同目录的 aasist_model.py 导入 Model 类并重命名为 AASIST
+from .aasist_model import Model as AASIST
 
 
 class AcousticDetector(BaseDetector):
@@ -44,10 +44,19 @@ class AcousticDetector(BaseDetector):
         )
         self.log_offset = 1e-6
 
-        # 2. 加载模型定义
-        self.model = AASIST()
+        # 2. 定义模型配置（请从官方仓库 main.py 中获取准确值）
+        d_args = {
+            "filts": [70, [1, 32], [32, 32], [32, 64], [64, 64]],
+            "gat_dims": [64, 32],
+            "pool_ratios": [0.5, 0.5, 0.5, 0.5],
+            "temperatures": [2, 2, 100],
+            "first_conv": 1024,
+        }
 
-        # 3. 加载预训练权重
+        # 3. 实例化模型
+        self.model = AASIST(d_args)
+
+        # 4. 加载预训练权重
         model_path = self.config.get(
             'model_path',
             os.path.join(os.path.dirname(__file__), 'models', 'aasist.pth')
@@ -113,8 +122,9 @@ class AcousticDetector(BaseDetector):
 
             # 2. 模型推理
             with torch.no_grad():
-                logits = self.model(input_tensor)  # (1,2)
-                probs = F.softmax(logits, dim=-1)
+                # AASIST 的 forward 返回 (last_hidden, output)，我们只需要 output
+                _, output = self.model(input_tensor)  # output shape: (1, 2)
+                probs = F.softmax(output, dim=-1)
                 risk_score = probs[0, 1].item()     # spoof 概率
 
             # 3. 生成建议
