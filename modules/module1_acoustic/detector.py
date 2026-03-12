@@ -1,68 +1,106 @@
 """
 modules/module_a_acoustic/detector.py
-声学物理层检测器（基于 RawNet2 端到端深度学习模型）
+声学物理层检测器（基于 AASIST 模型）
 继承 core.base_module.BaseDetector，实现 setup() 和 detect(ctx)
-使用简化版 AudioPreprocessor 进行归一化和长度调整。
 """
 import os
 import numpy as np
 import torch
 import torch.nn.functional as F
-from core.protocol import SystemContext, DetectionResult
-from .audio_preprocessor import AudioPreprocessor
-from core.base_module import BaseDetector, DetectionResult
-from .rawnet2_model import RawNet2
+import torchaudio
+from core.base_module import BaseDetector
+from core.protocol import SystemContext, RiskReport
+
+# 从同目录的 aasist_model.py 导入 AASIST 类
+from .aasist_model import AASIST
 
 
 class AcousticDetector(BaseDetector):
     """
-    使用 RawNet2 预训练模型检测声学欺骗攻击（重放、合成等）。
+    使用 AASIST 预训练模型检测声学欺骗攻击（AI合成语音、重放等）。
     """
-
     def __init__(self, config=None):
-        # 1. 修正父类调用：BaseDetector 只需要 module_id "A"
-        super().__init__(module_id="A")
-
-        # 2. 核心修正：显式将传入的 config 保存到实例中
-        # 这样下面的 self.config.get 才能找到变量
-        self.config = config if config is not None else {}
-
-        # --- 以下是成员 A 的原始代码，保持原样 ---
+        super().__init__(config)
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model = None
-        self.preprocessor = None
-        # 现在访问 self.config 就不会报错了
+        self.mel_transform = None
+        # AASIST 期望的输入长度（4秒 @16kHz = 64600 样本）
         self.expected_length = self.config.get('expected_length', 64600)
+        # 风险阈值
         self.thresholds = self.config.get('thresholds', {'PASS': 0.3, 'CONFIRM': 0.6})
-    def setup(self):
-        """加载 RawNet2 预训练权重并初始化预处理器"""
-        # 初始化预处理器（简单模式，仅归一化和长度调整）
-        self.preprocessor = AudioPreprocessor(target_sr=16000)
 
-        # 模型路径
+    def setup(self):
+        """加载 AASIST 预训练模型并初始化谱图转换器"""
+        # 1. 初始化 Mel 谱图转换器（参数与 AASIST 官方一致）
+        self.mel_transform = torchaudio.transforms.MelSpectrogram(
+            sample_rate=16000,
+            n_fft=1024,
+            hop_length=160,          # 10ms 帧移
+            win_length=400,           # 25ms 窗长
+            n_mels=80,
+            f_min=0,
+            f_max=8000,
+            power=2.0
+        )
+        self.log_offset = 1e-6
+
+        # 2. 加载模型定义
+        self.model = AASIST()
+
+        # 3. 加载预训练权重
         model_path = self.config.get(
             'model_path',
-            r"D:\essay of crypto\AutoSafe-V-Guard\models\rawnet2\rawnet2.pth"
+            os.path.join(os.path.dirname(__file__), 'models', 'aasist.pth')
         )
-
         if not os.path.exists(model_path):
-            self.logger.error(f"RawNet2 model file not found: {model_path}")
-            raise FileNotFoundError(f"RawNet2 model missing: {model_path}")
+            self.logger.error(f"AASIST model file not found: {model_path}")
+            raise FileNotFoundError(f"AASIST model missing: {model_path}")
 
-        # 初始化模型并加载权重
-        self.model = RawNet2(pretrained_path=model_path)
+        state_dict = torch.load(model_path, map_location='cpu')
+        # 处理权重字典可能包含的键名
+        if 'model' in state_dict:
+            state_dict = state_dict['model']
+        # 移除 'module.' 前缀（如果权重是从 DataParallel 保存的）
+        from collections import OrderedDict
+        new_state_dict = OrderedDict()
+        for k, v in state_dict.items():
+            name = k.replace('module.', '')
+            new_state_dict[name] = v
+
+        self.model.load_state_dict(new_state_dict, strict=False)
         self.model.to(self.device)
         self.model.eval()
-        self.logger.info(f"RawNet2 model loaded from {model_path} to {self.device}")
+        self.logger.info(f"AASIST model loaded from {model_path} to {self.device}")
 
-    def detect(self, ctx: SystemContext) -> DetectionResult:
+    def _preprocess(self, audio):
         """
-        核心检测逻辑。
-        ctx.audio_frame: 原始音频块 (numpy array, 16kHz 单声道)
+        将原始音频转换为 AASIST 输入格式：Log-Mel 谱图
+        输入: audio (numpy array, 16kHz)
+        输出: tensor (1, 1, 80, T)  # batch=1, channel=1, freq=80, time=T
         """
+        # 长度调整
+        if len(audio) > self.expected_length:
+            audio = audio[:self.expected_length]
+        elif len(audio) < self.expected_length:
+            pad = self.expected_length - len(audio)
+            audio = np.pad(audio, (0, pad), 'constant')
+
+        # 转为 tensor 并添加 batch 维度
+        audio_tensor = torch.from_numpy(audio).float().unsqueeze(0)  # (1, samples)
+        audio_tensor = audio_tensor.to(self.device)
+
+        # 计算 Mel 谱图
+        with torch.no_grad():
+            mel = self.mel_transform(audio_tensor)  # (1, n_mels, time)
+            log_mel = torch.log(mel + self.log_offset)
+            # 添加 channel 维度 (1, 1, n_mels, time)
+            log_mel = log_mel.unsqueeze(1)
+        return log_mel
+
+    def detect(self, ctx: SystemContext) -> RiskReport:
         audio = ctx.audio_frame
         if audio is None or len(audio) == 0:
-            return DetectionResult(
+            return RiskReport(
                 risk_score=0.0,
                 suggestion="PASS",
                 reason="No audio input",
@@ -70,56 +108,43 @@ class AcousticDetector(BaseDetector):
             )
 
         try:
-            # 1. 预处理：归一化、长度调整
-            processed_audio = self.preprocessor.process(
-                audio,
-                orig_sr=16000,               # 假设输入音频已是16kHz，但保留参数以备后续
-                target_length=self.expected_length
-            )
+            # 1. 预处理为 Log-Mel 谱图
+            input_tensor = self._preprocess(audio)  # (1,1,80,T)
 
-            # 2. 转换为 tensor 并添加 batch 和 channel 维度
-            tensor = torch.from_numpy(processed_audio).float().to(self.device)
-            tensor = tensor.unsqueeze(0).unsqueeze(0)  # (1, 1, samples)
-
-            # 3. 模型推理
+            # 2. 模型推理
             with torch.no_grad():
-                logits = self.model(tensor)           # (1, 2)
-                probs = F.softmax(logits, dim=-1)     # (1, 2)
-                # 假设类别索引：0=bonafide, 1=spoof
-                risk_score = probs[0, 1].item()       # spoof 概率作为风险分数
+                logits = self.model(input_tensor)  # (1,2)
+                probs = F.softmax(logits, dim=-1)
+                risk_score = probs[0, 1].item()     # spoof 概率
 
-            # 4. 生成建议
+            # 3. 生成建议
             suggestion = self._get_suggestion(risk_score)
 
-            # 5. 构建证据（可用于调试和可视化）
+            # 4. 证据
             evidence = {
                 "spoof_prob": risk_score,
                 "bonafide_prob": probs[0, 0].item(),
-                "logits": logits.cpu().numpy().tolist(),
-                "input_length": len(audio)
+                "input_length": len(audio),
+                "spectrogram_shape": list(input_tensor.shape)
             }
 
-            return DetectionResult(
-                module_id="A",
+            return RiskReport(
                 risk_score=risk_score,
-                decision=suggestion,
-                reason="Acoustic spoofing detection with RawNet2",
-                metadata=evidence
+                suggestion=suggestion,
+                reason="Acoustic spoofing detection with AASIST",
+                evidence=evidence
             )
 
         except Exception as e:
             self.logger.exception("Error in acoustic detection")
-            # 发生异常时返回保守值（0.5）和 PASS 建议，避免系统崩溃
             return RiskReport(
-                module_id="A",
                 risk_score=0.5,
-                decision="PASS",
+                suggestion="PASS",
                 reason=f"Acoustic detection error: {str(e)}",
-                metadata={}
+                evidence={}
             )
 
-    def _get_suggestion(self, risk_score: float) -> str:
-        """根据风险分数返回建议"""
+    def _get_suggestion(self, risk_score):
         if risk_score < self.thresholds['PASS']:
             return "PASS"
         elif risk_score < self.thresholds['CONFIRM']:
