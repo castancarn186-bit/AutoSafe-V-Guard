@@ -7,14 +7,14 @@ from pathlib import Path
 
 # 路径挂载
 CURRENT_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = CURRENT_DIR.parent.parent
+PROJECT_ROOT = CURRENT_DIR.parent.parent.parent.parent
 sys.path.append(str(PROJECT_ROOT))
 
-from models.embeddings import FeatureExtractor
+from modules.module3_semantic.models.embeddings import FeatureExtractor
 
 def build_index():
     # 👈 修改点：指向我们刚刚生成的 10000 条数据集
-    DATA_PATH = PROJECT_ROOT / "semantic_safety_dataset_10000.jsonl"
+    DATA_PATH = PROJECT_ROOT / "semantic_safety_train.jsonl"
     INDEX_SAVE_PATH = PROJECT_ROOT / "vguard_hnsw.index"
     META_SAVE_PATH = PROJECT_ROOT / "vguard_metadata.json"
 

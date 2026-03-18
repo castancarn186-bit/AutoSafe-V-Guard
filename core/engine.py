@@ -14,7 +14,7 @@ from modules.module3_semantic.detector import SemanticDetector
 class VGuardEngine:
     def __init__(self):
         self.logger = logging.getLogger("VGuard.Engine")
-        self.m1 = AcousticDetector()
+        self.m1 = AcousticDetector(module_id='A')
         self.m2 = ASRDetector()
         self.m3 = SemanticDetector()
         self.m1.setup(); self.m2.setup(); self.m3.setup()
@@ -64,7 +64,10 @@ class VGuardEngine:
         # 2. 串行执行 C 模块
         try:
             # 传入 ctx.__dict__ 以兼容 Pydantic 校验
-            report_c = await asyncio.to_thread(self.m3.detect, extracted_text, ctx.__dict__)
+            # 更新 ctx 的 asr_text 字段
+            ctx.asr_text = extracted_text
+            # 直接传递 ctx 对象
+            report_c = await asyncio.to_thread(self.m3.run, ctx)
         except Exception as e:
             report_c = DetectionResult("C", 0.8, "BLOCK", f"语义层异常: {e}")
 

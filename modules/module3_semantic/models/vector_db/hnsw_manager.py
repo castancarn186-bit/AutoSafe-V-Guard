@@ -11,7 +11,7 @@ class HNSWManager:
     """
     def __init__(self):
         # 向上找三层，精准定位到 gemini 根目录
-        self.db_dir = Path(__file__).resolve().parent.parent.parent
+        self.db_dir = Path(__file__).resolve().parent.parent.parent.parent
         self.index_path = self.db_dir / 'vguard_hnsw.index'
         self.meta_path = self.db_dir / 'vguard_metadata.json'
         

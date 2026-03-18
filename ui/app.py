@@ -83,6 +83,7 @@ async def main_ui(page: ft.Page):
     if not hasattr(shared_state, 'vehicle_speed'): shared_state.vehicle_speed = 0
     if not hasattr(shared_state, 'asr_text'): shared_state.asr_text = "等待输入..."
     if not hasattr(shared_state, 'realtime_volume'): shared_state.realtime_volume = 0.0  # 实时音量
+    if not hasattr(shared_state, 'attack_type'): shared_state.attack_type = "系统正常运行中"
 
     if not hasattr(shared_state, 'asr_model'):
         try:
@@ -167,6 +168,11 @@ async def main_ui(page: ft.Page):
             shared_state.decision = result["decision"]
             shared_state.latest_reports = result["reports"]
 
+            for report in result["reports"]:
+                if report.module_id == 'A':
+                    # 取出我们在 detector.py 里写的 reason
+                    shared_state.attack_type = report.reason
+                    break
             # 4. 更新 UI 日志渲染
             ts = datetime.now().strftime("%H:%M:%S")
             log_list.controls.insert(0, ft.Text(
@@ -321,6 +327,7 @@ async def main_ui(page: ft.Page):
             total, decision = shared_state.total_risk, shared_state.decision
             user_bubble_text.value = f"User: {shared_state.asr_text}"
             system_title.value = f"● {decision} Risk: {total:.2f}"
+
             system_title.color = RED_GLOW if decision == "BLOCK" else (
                 ORANGE_GLOW if decision == "REVIEW" else GREEN_GLOW)
 

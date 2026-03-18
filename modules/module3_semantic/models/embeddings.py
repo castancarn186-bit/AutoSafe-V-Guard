@@ -35,7 +35,13 @@ class FeatureExtractor:
         """
         # 1. 速度归一化 (0-200 km/h -> 0.0-1.0)
         speed_norm = min(context['speed'] / 200.0, 1.0)
-        
+
+        speed = context['speed']
+        bins = [0, 30, 60, 90, 120, float('inf')]
+        speed_bin = np.digitize(speed, bins) - 1  # 返回 0,1,2,3,4
+        speed_onehot = np.zeros(5, dtype=np.float32)
+        speed_onehot[speed_bin] = 1.0
+
         # 2. 档位 One-Hot 编码
         gear_map = {'P': [1,0,0,0], 'R': [0,1,0,0], 'N': [0,0,1,0], 'D': [0,0,0,1]}
         gear_vec = gear_map.get(context['gear'], [0,0,0,0])
@@ -46,5 +52,20 @@ class FeatureExtractor:
         
         # 4. 控制参数归一化 (如音量百分比，如果没有具体参数则默认为0)
         param_norm = (param / 100.0) if param is not None else 0.0
-        
-        return np.array([speed_norm] + gear_vec + weather_vec + [param_norm], dtype=np.float32)
+        is_bad_weather = 1 if context['weather'] in ['rainy', 'snowy', 'hail'] else 0
+        speed_weather_interact = speed_norm * is_bad_weather  # 交互特征
+        # 打印各部分长度
+        print(f"speed_norm 类型: {type(speed_norm)}")
+        print(f"speed_onehot 长度: {len(speed_onehot.tolist())}")  # 应为 5
+        print(f"gear_vec 长度: {len(gear_vec)}")  # 应为 4
+        print(f"weather_vec 长度: {len(weather_vec)}")  # 应为 4
+        print(f"param_norm: {param_norm}")
+
+        feature_list = [speed_norm] + speed_onehot.tolist() + gear_vec + weather_vec + [param_norm,
+                                                                   speed_weather_interact]
+        print(f"合并后列表长度: {len(feature_list)}")  # 应为 15
+        return np.array(feature_list, dtype=np.float32)
+
+
+             # 返回数组
+

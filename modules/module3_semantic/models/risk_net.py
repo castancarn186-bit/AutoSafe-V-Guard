@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 
 class RiskNet(nn.Module):
-    def __init__(self, text_dim=384, context_dim=10, hidden_dim=256):
+    def __init__(self, text_dim=384, context_dim=16, hidden_dim=256):
         super(RiskNet, self).__init__()
         
         # 支路 1：语义分支 (处理指令)
@@ -15,7 +15,7 @@ class RiskNet(nn.Module):
         
         # 支路 2：环境分支 (处理车速、天气、行人等物理事实)
         self.context_branch = nn.Sequential(
-            nn.Linear(context_dim, 32),
+            nn.Linear(context_dim, 64),
             nn.ReLU()
         )
         
@@ -27,7 +27,7 @@ class RiskNet(nn.Module):
         
         # 最终融合层 (128 + 32 + 16 = 176)
         self.fusion_net = nn.Sequential(
-            nn.Linear(176, hidden_dim),
+            nn.Linear(208, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, 64),
             nn.ReLU(),

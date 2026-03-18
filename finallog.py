@@ -2,8 +2,8 @@ import os
 
 # --- 配置区：直接在这里改 ---
 # 你想要生成的模块文件夹名称
-TARGET_FOLDERS = ['modules/module3_semantic']
-OUTPUT_FILE = "module3.txt"
+TARGET_FOLDERS = ['core']
+OUTPUT_FILE = "core.txt"
 IGNORE_EXTS = {
     '.pth', '.pkl', '.h5', '.onnx', '.pb', '.tensor',  # 模型权重
     '.wav', '.mp3', '.flac',                          # 音频

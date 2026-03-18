@@ -1,96 +1,279 @@
-# c:\Users\Leo\Desktop\gemini\data_pipeline\synthesizer.py
 import json
 import random
 import uuid
 from pathlib import Path
 
-def generate_hybrid_dataset(count=10000):
-    # 保存路径：根目录下
-    output_path = Path(__file__).resolve().parent.parent / "semantic_safety_dataset_10000.jsonl"
-    print(f"[*] 启动 V-Guard 增强型数据集生成器...")
-    print(f"[*] 目标规模: {count} 条 | 包含对冲逻辑与环境变量")
+# =========================
+# Intent + 语料模板
+# =========================
 
-    # 意图模版库 (涵盖安全、警告、危险三类意图)
-    templates = [
-        {"text": "帮我打开车门", "intent": "open_door", "type": "physical"},
-        {"text": "我现在想下车", "intent": "open_door", "type": "physical"},
-        {"text": "把窗户全部降下来", "intent": "open_window", "type": "physical"},
-        {"text": "帮我开一点点窗缝透气", "intent": "open_window_slight", "type": "physical"},
-        {"text": "调高空调温度", "intent": "set_ac", "type": "safe"},
-        {"text": "我想听首欢快的歌", "intent": "media", "type": "safe"},
-        {"text": "打开后排娱乐屏幕", "intent": "entertainment", "type": "media"},
-        {"text": "帮我开启自动紧急制动", "intent": "emergency", "type": "safety_system"}
-    ]
+INTENT_TEMPLATES = {
 
-    with open(output_path, "w", encoding="utf-8") as f:
-        for i in range(count):
-            tpl = random.choice(templates)
-            
-            # 随机生成环境变量
-            speed = random.uniform(0, 150)
-            # 增加“静止状态”的权重，用于训练模型分辨静止与行驶的巨大差异
-            if random.random() < 0.3: speed = 0.0 
-            
-            weather = random.choice(["sunny", "rainy", "snowy", "hail"])
-            gear = "D" if speed > 5 else random.choice(["P", "R", "N"])
-            has_peds = random.choice([True, False]) # 周边是否有行人
-            
-            # --- 专家打分逻辑 (神经网络的学习目标) ---
-            risk_score = 0.0
-            reason = "SAFE: 环境安全，操作合理。"
+"open_door":[
+"打开车门",
+"帮我开一下车门",
+"我想下车",
+"把门解锁",
+"开门",
+"现在开车门"
+],
 
-            # 逻辑 1: 物理门锁限制 (极其严格)
-            if tpl["intent"] == "open_door":
-                if speed > 5:
-                    risk_score = 1.0
-                    reason = f"FATAL: 车辆行驶中({speed:.1f}km/h)严禁操作车门。"
-                elif has_peds:
-                    risk_score = 0.8
-                    reason = "DANGER: 车辆静止但周围有行人经过，开门存在碰撞风险。"
-                elif gear != "P":
-                    risk_score = 0.4
-                    reason = "WARNING: 建议先挂入P档再开启车门。"
+"lock_door":[
+"锁车门",
+"把门锁上",
+"锁一下车"
+],
 
-            # 逻辑 2: 车窗逻辑 (受速度与天气双重影响)
-            elif tpl["intent"] == "open_window":
-                if speed > 80:
-                    risk_score = 0.9
-                    reason = "DANGER: 高速行驶禁止大幅开启车窗。"
-                elif weather in ["rainy", "hail"]:
-                    risk_score = 0.7
-                    reason = "WARNING: 检测到降雨/冰雹，开启车窗可能损坏内饰。"
-            
-            # 逻辑 3: 娱乐系统 (防分心逻辑)
-            elif tpl["intent"] == "entertainment":
-                if speed > 10:
-                    risk_score = 0.5
-                    reason = "WARNING: 行驶中开启视频可能分散驾驶员注意力。"
+"open_window":[
+"打开车窗",
+"把窗户降下来",
+"车窗打开",
+"开窗通风"
+],
 
-            # 逻辑 4: 安全系统 (永远是安全的)
-            elif tpl["type"] == "safety_system":
-                risk_score = 0.0
-                reason = "SAFE: 安全相关系统允许任何时刻操作。"
+"close_window":[
+"关闭车窗",
+"把窗户关上",
+"车窗关一下"
+],
 
-            # 构造数据条目
-            item = {
-                "id": str(uuid.uuid4()),
-                "text": tpl["text"],
-                "intent_label": tpl["intent"],
-                "context": {
-                    "speed": round(speed, 1),
-                    "gear": gear,
-                    "weather": weather,
-                    "has_pedestrians": has_peds
-                },
-                "ground_truth_score": risk_score,
-                "reason": reason
-            }
-            f.write(json.dumps(item, ensure_ascii=False) + "\n")
-            
-            if (i + 1) % 2000 == 0:
-                print(f"[>] 已完成 {i + 1} 条...")
+"set_ac_temp":[
+"空调调到{}度",
+"把空调温度调到{}度",
+"空调{}度"
+],
 
-    print(f"【成功】增强版数据集已保存至: {output_path}")
+"play_music":[
+"播放音乐",
+"放首歌",
+"我想听音乐",
+"来点歌"
+],
 
-if __name__ == "__main__":
-    generate_hybrid_dataset(10000)
+"pause_music":[
+"暂停音乐",
+"先别放歌",
+"音乐停一下"
+],
+
+"nav_home":[
+"导航回家",
+"带我回家",
+"导航到家"
+],
+
+"nav_company":[
+"导航去公司",
+"带我去单位",
+"去公司怎么走"
+],
+
+"seat_backward":[
+"座椅往后一点",
+"把座椅调后",
+"座椅往后调"
+],
+
+"seat_forward":[
+"座椅往前一点",
+"座椅往前调"
+],
+
+"open_trunk":[
+"打开后备箱",
+"帮我开一下后备箱"
+],
+
+"enable_autopilot":[
+"开启自动驾驶",
+"打开自动驾驶"
+],
+
+"disable_autopilot":[
+"关闭自动驾驶",
+"停止自动驾驶"
+],
+
+"emergency_stop":[
+"紧急停车",
+"立刻停车",
+"马上停车"
+]
+}
+
+
+# =========================
+# context生成
+# =========================
+
+def generate_context():
+
+    speed = round(random.uniform(0,140),1)
+
+    if speed <1:
+        gear="P"
+    elif speed<5:
+        gear=random.choice(["P","N"])
+    else:
+        gear="D"
+
+    ctx={
+
+    "speed":speed,
+    "gear":gear,
+    "weather":random.choice(["sunny","rainy","snowy"]),
+    "road_type":random.choice(["urban","highway"]),
+    "traffic":random.choice(["low","medium","high"]),
+    "has_pedestrians":random.random()<0.3
+
+    }
+
+    return ctx
+
+
+# =========================
+# 文本生成
+# =========================
+
+def generate_text(intent):
+
+    template=random.choice(INTENT_TEMPLATES[intent])
+
+    if "{}" in template:
+
+        temp=random.choice([20,22,24,26])
+        return template.format(temp)
+
+    return template
+
+
+# =========================
+# 风险专家系统
+# =========================
+
+def risk_engine(intent,ctx):
+
+    speed=ctx["speed"]
+    road=ctx["road_type"]
+    weather=ctx["weather"]
+    peds=ctx["has_pedestrians"]
+
+    score=0
+    reason="SAFE"
+
+    # 开门
+
+    if intent=="open_door":
+
+        if speed>5:
+
+            score=1.0
+            reason="FATAL: moving vehicle cannot open door"
+
+        elif peds:
+
+            score=0.7
+            reason="DANGER: pedestrians nearby"
+
+    # 开窗
+
+    if intent=="open_window":
+
+        if speed>90:
+
+            score=0.8
+            reason="DANGER: high speed open window"
+
+        if weather=="rainy":
+
+            score=max(score,0.5)
+            reason="WARNING: raining"
+
+    # 自动驾驶
+
+    if intent=="enable_autopilot":
+
+        if road!="highway":
+
+            score=0.7
+            reason="WARNING: autopilot not suitable"
+
+    # 紧急停车
+
+    if intent=="emergency_stop":
+
+        if speed>100:
+
+            score=0.6
+            reason="WARNING: emergency stop high speed"
+
+    return score,reason
+
+
+# =========================
+# 样本生成
+# =========================
+
+def generate_sample():
+
+    intent=random.choice(list(INTENT_TEMPLATES.keys()))
+
+    text=generate_text(intent)
+
+    ctx=generate_context()
+
+    score,reason=risk_engine(intent,ctx)
+
+    item={
+
+    "id":str(uuid.uuid4()),
+    "text":text,
+    "intent_label":intent,
+    "context":ctx,
+    "ground_truth_score":score,
+    "reason":reason
+
+    }
+
+    return item
+
+
+# =========================
+# 数据集生成
+# =========================
+
+def generate_dataset(total=20000):
+
+    root=Path(__file__).resolve().parent.parent.parent.parent
+
+    train_path=root/"semantic_safety_train.jsonl"
+    test_path=root/"semantic_safety_test.jsonl"
+
+    train=open(train_path,"w",encoding="utf8")
+    test=open(test_path,"w",encoding="utf8")
+
+    for i in range(total):
+
+        item=generate_sample()
+
+        if random.random()<0.8:
+
+            train.write(json.dumps(item,ensure_ascii=False)+"\n")
+
+        else:
+
+            test.write(json.dumps(item,ensure_ascii=False)+"\n")
+
+        if (i+1)%2000==0:
+
+            print("generated",i+1)
+
+    train.close()
+    test.close()
+
+    print("dataset finished")
+
+
+if __name__=="__main__":
+
+    generate_dataset(20000)
