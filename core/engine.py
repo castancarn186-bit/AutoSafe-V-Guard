@@ -18,7 +18,7 @@ class VGuardEngine:
         self.m2 = ASRDetector()
         self.m3 = SemanticDetector()
         self.m1.setup(); self.m2.setup(); self.m3.setup()
-        self.weights = {"A": 0.35, "B": 0.25, "C": 0.40}
+        self.weights = {"A": 0.30, "B": 0.2, "C": 0.5}
 
     async def analyze_risk_pipeline(self, audio_path: str, speed: float) -> dict:
         start_ts = time.perf_counter()
@@ -77,7 +77,22 @@ class VGuardEngine:
         for r in reports:
             total_risk += r.risk_score * self.weights.get(r.module_id, 0.33)
 
-        decision = "BLOCK" if total_risk > 0.65 else "REVIEW" if total_risk > 0.35 else "PASS"
+        any_block = False
+        any_review = False
+        for r in reports:
+            if r.decision == "BLOCK" or r.risk_score >= 0.8:
+                any_block = True
+                break
+            if r.decision == "REVIEW" or r.risk_score >= 0.5:
+                any_review = True
+
+        if any_block:
+            decision = "BLOCK"
+        elif any_review:
+            decision = "REVIEW"
+        else:
+            decision = "PASS"
+
         latency = round((time.perf_counter() - start_ts) * 1000, 2)
 
         self._print_terminal_log(extracted_text, speed, reports, total_risk, decision, latency)

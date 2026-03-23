@@ -22,14 +22,14 @@ from modules.module2_ASR.asr_risk_model import ASRRiskModel
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 # --- 样式常量 (保持不变) ---
-BG_COLOR = "#080c11"
-PANEL_BG = "#0d131a"
-BORDER_COLOR = "#1a2636"
-CYAN_GLOW = "#00f2ff"
-RED_GLOW = "#ff2a2a"
-ORANGE_GLOW = "#ffa500"
-GREEN_GLOW = "#34c759"
-TEXT_MUTED = "#647b91"
+BG_COLOR = "#ffffff"
+PANEL_BG = "#f5f5f5"
+BORDER_COLOR = "#dddddd"
+CYAN_GLOW = "#007a8a"
+RED_GLOW = "#b91c1c"
+ORANGE_GLOW = "#b45b0f"
+GREEN_GLOW = "#1e7b4c"
+TEXT_MUTED = "#555555"
 
 # --- 全局音频缓冲区 (16000采样率, 每秒约15.6个CHUNK, 存5秒共约78个CHUNK) ---
 # 这个缓冲区是“实时录音”和“声波图”共享的命脉
@@ -47,7 +47,7 @@ def create_glowing_panel(title, content, glow_color=CYAN_GLOW, expand=True):
         border=get_border(1, BORDER_COLOR),
         shadow=ft.BoxShadow(spread_radius=0, blur_radius=10, color=f"{glow_color}40", offset=ft.Offset(0, 0)),
         content=ft.Column([
-            ft.Text(title, size=14, weight="900", color="white"),
+            ft.Text(title, size=14, weight="900", color="black"),
             ft.Divider(height=1, color=BORDER_COLOR),
             content
         ])
@@ -96,7 +96,7 @@ async def main_ui(page: ft.Page):
     page.padding = 20
     page.window_width = 1440
     page.window_height = 900
-    page.theme_mode = ft.ThemeMode.DARK
+    page.theme_mode = ft.ThemeMode.LIGHT
 
     # ==========================================
     # 🌊 成员 D 定制：真实的声波波动图组件
@@ -113,10 +113,10 @@ async def main_ui(page: ft.Page):
     # ==========================================
     def create_risk_circle(title):
         ring = ft.ProgressRing(width=70, height=70, stroke_width=7, value=0.0, color=GREEN_GLOW, bgcolor=BORDER_COLOR)
-        val_text = ft.Text("0.00", size=16, weight="bold", color="white")
+        val_text = ft.Text("0.00", size=16, weight="bold", color="black")
         reason_text = ft.Text("待机中", size=10, color=TEXT_MUTED, text_align="center")
         return ft.Container(content=ft.Column([
-            ft.Text(title, size=12, weight="bold", color="white"),
+            ft.Text(title, size=12, weight="bold", color="black"),
             ft.Stack([ring, ft.Container(val_text, alignment=ft.Alignment(0, 0), width=70, height=70)]),
             reason_text
         ], horizontal_alignment="center", spacing=5), padding=10, border=get_border(1, BORDER_COLOR), border_radius=10,
@@ -200,7 +200,7 @@ async def main_ui(page: ft.Page):
         speed_ring.value = min(val / 200.0, 1.0)
         page.update()
 
-    speed_text = ft.Text(str(shared_state.vehicle_speed), size=60, weight="900", color="white")
+    speed_text = ft.Text(str(shared_state.vehicle_speed), size=60, weight="900", color="black")
     speed_ring = ft.ProgressRing(width=250, height=250, stroke_width=15, value=0.0, color=CYAN_GLOW,
                                  bgcolor=BORDER_COLOR)
     speedometer = ft.Stack(
@@ -213,7 +213,7 @@ async def main_ui(page: ft.Page):
         [ft.Container(height=10), ft.Container(speedometer, alignment=ft.Alignment(0, 0)),
          ft.Container(height=20), speed_slider]))
 
-    user_bubble_text = ft.Text("等待输入...", size=18, color="white")
+    user_bubble_text = ft.Text("等待输入...", size=18, color="black")
     user_bubble = ft.Container(content=user_bubble_text, padding=15, border_radius=15, border=get_border(2, CYAN_GLOW),
                                bgcolor="#00f2ff10")
 
