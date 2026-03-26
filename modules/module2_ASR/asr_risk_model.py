@@ -1,6 +1,7 @@
 # asr_risk_model.py
 """
 极致优化版 - 关闭稳定性测试，只保留置信度分析
+新增：对抗性扰动洗涤
 目标: <500ms
 """
 
@@ -10,12 +11,14 @@ from typing import Dict, Optional
 from dataclasses import dataclass
 import librosa
 
-from modules.module2_ASR.asr_engine import create_asr_engine
-from modules.module2_ASR.confidence_analyzer import ConfidenceAnalyzer
+from asr_engine import create_asr_engine
+from confidence_analyzer import ConfidenceAnalyzer
+from audio_preprocessor import AudioPreprocessor  # 新增导入
 
 # VAD导入
 try:
     import webrtcvad
+
     VAD_AVAILABLE = True
 except ImportError:
     VAD_AVAILABLE = False
@@ -30,6 +33,10 @@ class OptimizedConfig:
     vad_aggressiveness: int = 3
     enable_stability: bool = False  # 关闭稳定性测试！
     alpha: float = 1.0  # 只用置信度
+
+    # 新增：对抗性防御配置
+    enable_adversarial_defense: bool = True  # 启用对抗性防御
+    defense_strength: str = "medium"  # light, medium, strong
 
 
 class VADProcessor:
@@ -81,7 +88,7 @@ class VADProcessor:
 
 
 class OptimizedASRRiskModel:
-    """极致优化版风险模型"""
+    """极致优化版风险模型 - 集成对抗性防御"""
 
     def __init__(self, config: Optional[OptimizedConfig] = None):
         self.config = config or OptimizedConfig()
@@ -92,11 +99,20 @@ class OptimizedASRRiskModel:
         print(f"模型: {self.config.model_size}")
         print(f"VAD: {'启用' if self.config.enable_vad else '禁用'}")
         print(f"稳定性测试: {'关闭' if not self.config.enable_stability else '开启'}")
+        print(f"对抗性防御: {'启用' if self.config.enable_adversarial_defense else '禁用'}")  # 新增
+        print(f"防御强度: {self.config.defense_strength}")  # 新增
 
         # 初始化VAD
         self.vad = None
         if self.config.enable_vad and VAD_AVAILABLE:
             self.vad = VADProcessor(aggressiveness=self.config.vad_aggressiveness)
+
+        # 新增：初始化音频预处理器（含对抗性防御）
+        self.audio_preprocessor = AudioPreprocessor(
+            sample_rate=16000,
+            enable_adversarial_defense=self.config.enable_adversarial_defense,
+            defense_strength=self.config.defense_strength
+        )
 
         # 初始化ASR引擎
         print("\n📡 初始化ASR引擎...")
@@ -112,7 +128,7 @@ class OptimizedASRRiskModel:
         print("✅ 初始化完成")
 
     def compute_risk(self, audio: np.ndarray, sample_rate: int = 16000) -> Dict:
-        """快速风险计算"""
+        """快速风险计算 - 集成对抗性防御"""
         timings = {}
 
         # 1. VAD预处理
@@ -124,11 +140,20 @@ class OptimizedASRRiskModel:
             audio_processed = audio
             timings['vad_ms'] = 0
 
-        # 2. ASR转录
+        # 2. 对抗性扰动洗涤（新增）
+        defense_start = time.time()
+        audio_processed = self.audio_preprocessor.prepare_for_asr(
+            audio_processed,
+            sample_rate=sample_rate,
+            apply_defense=True
+        )
+        timings['defense_ms'] = (time.time() - defense_start) * 1000
+
+        # 3. ASR转录
         asr_start = time.time()
         asr_result = self.engine.transcribe(
             audio_processed,
-            sample_rate=sample_rate,
+            sample_rate=self.audio_preprocessor.sample_rate,
             language="zh"
         )
         timings['asr_ms'] = (time.time() - asr_start) * 1000
@@ -141,14 +166,14 @@ class OptimizedASRRiskModel:
                 'timings': timings
             }
 
-        # 3. 置信度分析
+        # 4. 置信度分析
         confidence = self.confidence_analyzer.analyze(asr_result)
 
-        # 4. 风险计算（只用置信度）
+        # 5. 风险计算（只用置信度）
         risk = 1.0 - confidence.confidence_score
         risk = max(0.0, min(1.0, risk))
 
-        timings['total_ms'] = timings['vad_ms'] + timings['asr_ms']
+        timings['total_ms'] = timings['vad_ms'] + timings['defense_ms'] + timings['asr_ms']
 
         # 风险等级
         if risk < 0.3:
@@ -174,24 +199,31 @@ class OptimizedASRRiskModel:
         """清理资源"""
         self.engine.cleanup()
 
+
 # ==================== 兼容性别名 ====================
-# 添加别名以兼容旧代码
 ASRRiskModel = OptimizedASRRiskModel
 ASRRiskConfig = OptimizedConfig
 
-# 导出所有需要的类
 __all__ = [
     'OptimizedASRRiskModel',
     'OptimizedConfig',
     'ASRRiskModel',
     'ASRRiskConfig'
 ]
+
+
 # ==================== 测试 ====================
 def test_optimized():
     """测试优化版"""
-    print("测试优化版ASR风险模型")
+    print("测试优化版ASR风险模型（含对抗性防御）")
 
-    model = OptimizedASRRiskModel()
+    config = OptimizedConfig(
+        model_size="tiny",
+        enable_vad=True,
+        enable_adversarial_defense=True,  # 启用防御
+        defense_strength="medium"
+    )
+    model = OptimizedASRRiskModel(config)
 
     try:
         # 加载音频
@@ -210,9 +242,10 @@ def test_optimized():
         print(f"决策:     {result['decision']}")
 
         print("\n⏱️ 性能统计:")
-        print(f"  VAD处理:  {result['timings']['vad_ms']:.1f}ms")
-        print(f"  ASR转录:  {result['timings']['asr_ms']:.1f}ms")
-        print(f"  总耗时:   {result['timings']['total_ms']:.1f}ms")
+        print(f"  VAD处理:   {result['timings']['vad_ms']:.1f}ms")
+        print(f"  防御处理:   {result['timings']['defense_ms']:.1f}ms")  # 新增
+        print(f"  ASR转录:   {result['timings']['asr_ms']:.1f}ms")
+        print(f"  总耗时:    {result['timings']['total_ms']:.1f}ms")
 
         if result['timings']['total_ms'] < 500:
             print(f"\n✅ 实时性达标 (<500ms)")
