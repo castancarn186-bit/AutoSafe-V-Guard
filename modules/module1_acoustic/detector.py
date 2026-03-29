@@ -1,206 +1,242 @@
 """
-modules/module_a_acoustic/detector.py
-声学物理层检测器（基于 AASIST 模型）
+modules/module1_acoustic/detector.py
+声学物理层检测器（多模型融合：LA + PA + 对抗检测）
 继承 core.base_module.BaseDetector，实现 setup() 和 detect(ctx)
 """
 import os
 import numpy as np
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import torchaudio
 from core.base_module import BaseDetector
-from core.protocol import SystemContext, DetectionResult
+from core.protocol import SystemContext, RiskReport
 
-# 从同目录的 aasist_model.py 导入 Model 类并重命名为 AASIST
-from modules.module1_acoustic.aasist_model import Model as AASIST
+# ==================== 自编码器定义（对抗检测） ====================
+class AudioAutoencoder(nn.Module):
+    """轻量级自编码器，用于对抗扰动检测"""
+    def __init__(self, input_dim=64600, latent_dim=256):
+        super().__init__()
+        self.encoder = nn.Sequential(
+            nn.Conv1d(1, 16, kernel_size=5, stride=2, padding=2),
+            nn.ReLU(),
+            nn.Conv1d(16, 32, kernel_size=5, stride=2, padding=2),
+            nn.ReLU(),
+            nn.Conv1d(32, 64, kernel_size=5, stride=2, padding=2),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool1d(1),
+            nn.Flatten(),
+            nn.Linear(64, latent_dim)
+        )
+        self.decoder = nn.Sequential(
+            nn.Linear(latent_dim, 64),
+            nn.ReLU(),
+            nn.Linear(64, input_dim),
+            nn.Tanh()
+        )
 
+    def forward(self, x):
+        z = self.encoder(x)
+        recon = self.decoder(z).view(x.size(0), 1, -1)
+        return recon
 
+# ==================== AASIST 模型导入 ====================
+from .aasist_model import Model as AASIST
+
+# ==================== 主检测器类 ====================
 class AcousticDetector(BaseDetector):
     """
-    使用 AASIST 预训练模型检测声学欺骗攻击（AI合成语音、重放等）。
+    多模型融合声学检测器：
+    - LA 模型（反欺骗，识别 TTS/VC 攻击）
+    - PA 模型（反重放，识别录音回放攻击）
+    - 自编码器（对抗检测，识别对抗性噪声）
     """
-
-    def __init__(self, module_id: str = 'A', config=None):
-        # 调用父类初始化，module_id 必须提供，这里给默认值 'A' 方便创建
-        super().__init__(module_id, config)
+    def __init__(self, config=None):
+        super().__init__(config)
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.model = None
+        self.la_model = None
+        self.pa_model = None
+        self.autoencoder = None
         self.mel_transform = None
-        # 现在 self.config 已经由父类设置，可以直接使用
+        self.log_offset = 1e-6
+
+        # 模型文件默认路径（相对于本文件所在目录的 models 子目录）
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        models_dir = os.path.join(base_dir, 'models')
+
+        self.la_model_path = self.config.get('la_model_path', os.path.join(models_dir, 'aasist_la.pth'))
+        self.pa_model_path = self.config.get('pa_model_path', os.path.join(models_dir, 'aasist_pa.pth'))
+        self.ae_model_path = self.config.get('ae_model_path', os.path.join(models_dir, 'autoencoder.pth'))
+
+        self.ae_threshold = self.config.get('ae_threshold', 0.05)
         self.expected_length = self.config.get('expected_length', 64600)
+        self.fusion_weights = self.config.get('fusion_weights', {'la': 0.5, 'pa': 0.5, 'ae': 0.0})
         self.thresholds = self.config.get('thresholds', {'PASS': 0.3, 'CONFIRM': 0.6})
 
     def setup(self):
-        """加载 AASIST 预训练模型"""
-        # [架构调整] 移除 Mel-Spectrogram 转换器！
-        # AASIST 内置了 SincNet 前端，直接处理 Raw Waveform，大大节省了车载平台的 CPU 算力消耗。
+        """加载所有启用的模型"""
+        # 初始化公共的 Mel 谱图转换器（AASIST 需要）
+        self.mel_transform = torchaudio.transforms.MelSpectrogram(
+            sample_rate=16000,
+            n_fft=1024,
+            hop_length=160,
+            win_length=400,
+            n_mels=80,
+            f_min=0,
+            f_max=8000,
+            power=2.0
+        )
 
-        # 2. 定义模型配置（使用官方 AASIST 参数）
-        d_args = {
+        # 1. LA 模型
+        if os.path.exists(self.la_model_path):
+            model_config = self._get_aasist_config()
+            self.la_model = AASIST(model_config).to(self.device)
+            state_dict = torch.load(self.la_model_path, map_location=self.device)
+            self.la_model.load_state_dict(state_dict, strict=True)
+            self.la_model.eval()
+            self.logger.info(f"LA model loaded from {self.la_model_path}")
+        else:
+            self.logger.warning(f"LA model not found at {self.la_model_path}")
+
+        # 2. PA 模型
+        if os.path.exists(self.pa_model_path):
+            model_config = self._get_aasist_config()
+            self.pa_model = AASIST(model_config).to(self.device)
+            state_dict = torch.load(self.pa_model_path, map_location=self.device)
+            self.pa_model.load_state_dict(state_dict, strict=True)
+            self.pa_model.eval()
+            self.logger.info(f"PA model loaded from {self.pa_model_path}")
+        else:
+            self.logger.warning(f"PA model not found at {self.pa_model_path}")
+
+        # 3. 自编码器（对抗检测）
+        if os.path.exists(self.ae_model_path):
+            self.autoencoder = AudioAutoencoder(input_dim=self.expected_length).to(self.device)
+            state_dict = torch.load(self.ae_model_path, map_location=self.device)
+            self.autoencoder.load_state_dict(state_dict, strict=True)
+            self.autoencoder.eval()
+            self.logger.info(f"Autoencoder loaded from {self.ae_model_path}")
+        else:
+            self.logger.warning(f"Autoencoder not found at {self.ae_model_path}")
+
+    def _get_aasist_config(self):
+        """返回 AASIST 模型配置（与训练时一致）"""
+        return {
+            "architecture": "AASIST",
+            "nb_samp": self.expected_length,
+            "first_conv": 128,
             "filts": [70, [1, 32], [32, 32], [32, 64], [64, 64]],
             "gat_dims": [64, 32],
-            "pool_ratios": [0.5, 0.5, 0.5, 0.5],
-            "temperatures": [2, 2, 100],
-            "first_conv": 128,
+            "pool_ratios": [0.5, 0.7, 0.5, 0.5],
+            "temperatures": [2.0, 2.0, 100.0, 100.0]
         }
 
-        # 3. 实例化模型
-        self.model = AASIST(d_args)
-
-        # 4. 加载预训练权重
-        model_path = self.config.get(
-            'model_path',
-            os.path.join(os.path.dirname(__file__), 'models', 'aasist.pth')
-        )
-        if not os.path.exists(model_path):
-            self.logger.error(f"AASIST model file not found: {model_path}")
-            raise FileNotFoundError(f"AASIST model missing: {model_path}")
-
-        state_dict = torch.load(model_path, map_location='cpu')
-        if 'model' in state_dict:
-            state_dict = state_dict['model']
-
-        from collections import OrderedDict
-        new_state_dict = OrderedDict()
-        for k, v in state_dict.items():
-            name = k.replace('module.', '')
-            new_state_dict[name] = v
-
-        self.model.load_state_dict(new_state_dict, strict=True)
-        self.model.to(self.device)
-        self.model.eval()
-        print("Model loaded. First conv layer weights (first 5 values):")
-        print(self.model.conv_time.band_pass[0, :5])  # 打印 sinc 卷积的前几个值
-        print("Model parameter count:", sum(p.numel() for p in self.model.parameters()))
-        self.logger.info(f"AASIST model loaded from {model_path} to {self.device}")
-
-    def _preprocess(self, audio):
+    def _preprocess_for_aasist(self, audio):
         """
-        [安全网关标准预处理] 循环拼接与物理量纲还原
+        将原始波形转换为 AASIST 输入：Log-Mel 谱图
+        输出形状: (1, 1, 80, T)
         """
-        # 1. 物理量纲还原：
-        # 车载麦克风通常采集为 int16（范围 -32768~32767）
-        # AASIST 需要 [-1.0, 1.0] 范围的浮点数。固定除以 32768.0 能保留真实的音量动态，
-        # 绝对不能用 `audio / max`，那样会把背景环境底噪放大 100 倍！
-        audio = np.array(audio, dtype=np.float32)
-        if np.max(np.abs(audio)) > 1.0:
-            audio = audio / 32768.0
-
-        # 2. 长度对齐：拒绝补零，使用波形循环拼接 (Tile)
-        audio_len = len(audio)
-        if audio_len < self.expected_length:
-            # 循环重复填充，保持声学连贯性
-            num_repeats = int(np.ceil(self.expected_length / audio_len))
-            audio = np.tile(audio, num_repeats)[:self.expected_length]
-        else:
-            # 超长则截断
+        if len(audio) > self.expected_length:
             audio = audio[:self.expected_length]
+        else:
+            pad = self.expected_length - len(audio)
+            audio = np.pad(audio, (0, pad), 'constant')
+        audio_tensor = torch.from_numpy(audio).float().unsqueeze(0).to(self.device)
+        mel = self.mel_transform(audio_tensor)
+        log_mel = torch.log(mel + self.log_offset)
+        return log_mel.unsqueeze(0)  # (1,1,80,T)
 
-        # 3. 转为 tensor
-        audio_tensor = torch.from_numpy(audio).float().unsqueeze(0)
-        audio_tensor = audio_tensor.to(self.device)
+    def _preprocess_for_ae(self, audio):
+        """
+        自编码器预处理：归一化 + 固定长度
+        输出形状: (1, 1, samples)
+        """
+        if len(audio) > self.expected_length:
+            audio = audio[:self.expected_length]
+        else:
+            pad = self.expected_length - len(audio)
+            audio = np.pad(audio, (0, pad), 'constant')
+        max_val = np.max(np.abs(audio))
+        if max_val > 1e-8:
+            audio = audio / max_val
+        tensor = torch.from_numpy(audio).float().unsqueeze(0).unsqueeze(0).to(self.device)
+        return tensor
 
-        return audio_tensor
+    def _predict_aasist(self, model, audio):
+        """使用 AASIST 模型预测 spoof 概率（风险分数）"""
+        if model is None:
+            return 0.0
+        input_tensor = self._preprocess_for_aasist(audio)
+        with torch.no_grad():
+            _, out = model(input_tensor)   # out shape: (1,2)
+            prob = torch.softmax(out, dim=-1)[0, 1].item()
+        return prob
 
+    def _predict_ae(self, audio):
+        """自编码器重构误差 -> 风险分数 [0,1]"""
+        if self.autoencoder is None:
+            return 0.0
+        x = self._preprocess_for_ae(audio)
+        with torch.no_grad():
+            recon = self.autoencoder(x)
+            mse = torch.mean((recon - x) ** 2).item()
+        # 将误差映射到 [0,1]，阈值 self.ae_threshold 为中心点
+        risk = 1.0 / (1.0 + np.exp(-10 * (mse - self.ae_threshold)))
+        return risk
 
-    def detect(self, ctx: SystemContext) -> DetectionResult:
+    def detect(self, ctx: SystemContext) -> RiskReport:
         audio = ctx.audio_frame
         if audio is None or len(audio) == 0:
-            return DetectionResult(
-                module_id='A',
+            return RiskReport(
                 risk_score=0.0,
-                decision="PASS",
+                suggestion="PASS",
                 reason="No audio input",
-                metadata={}
+                evidence={}
             )
-            # 1. 预处理为 Log-Mel 谱图
-        input_tensor = self._preprocess(audio)  # (1,1,80,T)
 
-            # 2. 模型推理
-        with torch.no_grad():
-                # AASIST 的 forward 返回 (last_hidden, output)，我们只需要 output
-            _, output = self.model(input_tensor)  # output shape: (1, 2)
-            probs = F.softmax(output, dim=-1)
-            # 【架构级修正】: Class 0 = Spoof, Class 1 = Bonafide (真人)
-            bonafide_prob = probs[0, 1].item()
-            spoof_prob = probs[0, 0].item()
-
-                # 风险分应该等于 spoof (伪造) 的概率
-            risk_score = spoof_prob
-                # spoof 概率
-
-            # 3. 生成建议
-        suggestion = self._get_suggestion(risk_score)
-
-            # 4. 证据
-        evidence = {
-                "spoof_prob": risk_score,
-                "bonafide_prob": probs[0, 1].item(),
-                "input_length": len(audio),
-                "spectrogram_shape": list(input_tensor.shape)
-        }
-
-        return DetectionResult(
-                module_id='A',
-                risk_score=risk_score,
-                decision=suggestion,
-                reason="Acoustic spoofing detection with AASIST",
-                metadata=evidence
-        )
-
-    '''
         try:
-            # 1. 预处理为 Log-Mel 谱图
-            input_tensor = self._preprocess(audio)  # (1,1,80,T)
+            # 计算各模型风险
+            la_risk = self._predict_aasist(self.la_model, audio)
+            pa_risk = self._predict_aasist(self.pa_model, audio)
+            ae_risk = self._predict_ae(audio)
 
-            # 2. 模型推理
-            with torch.no_grad():
-                # AASIST 的 forward 返回 (last_hidden, output)，我们只需要 output
-                _, output = self.model(input_tensor)  # output shape: (1, 2)
-                probs = F.softmax(output, dim=-1)
-                # 【架构级修正】: Class 0 = Spoof, Class 1 = Bonafide (真人)
-                bonafide_prob = probs[0, 1].item()
-                spoof_prob = probs[0, 0].item()
+            # 加权融合
+            final_risk = (self.fusion_weights.get('la', 0.0) * la_risk +
+                          self.fusion_weights.get('pa', 0.0) * pa_risk +
+                          self.fusion_weights.get('ae', 0.0) * ae_risk)
+            final_risk = np.clip(final_risk, 0.0, 1.0)
 
-                # 风险分应该等于 spoof (伪造) 的概率
-                risk_score = spoof_prob
-                # spoof 概率
-
-            # 3. 生成建议
-            suggestion = self._get_suggestion(risk_score)
-
-            # 4. 证据
+            suggestion = self._get_suggestion(final_risk)
             evidence = {
-                "spoof_prob": risk_score,
-                "bonafide_prob": probs[0, 0].item(),
-                "input_length": len(audio),
-                "spectrogram_shape": list(input_tensor.shape)
+                "la_risk": la_risk,
+                "pa_risk": pa_risk,
+                "ae_risk": ae_risk,
+                "final_risk": final_risk,
+                "fusion_weights": self.fusion_weights
             }
 
-            return DetectionResult(
-                module_id='A',
-                risk_score=risk_score,
-                decision=suggestion,
-                reason="Acoustic spoofing detection with AASIST",
-                metadata=evidence
+            return RiskReport(
+                risk_score=final_risk,
+                suggestion=suggestion,
+                reason="Multi-model acoustic detection",
+                evidence=evidence
             )
-        '''
-    '''
         except Exception as e:
             self.logger.exception("Error in acoustic detection")
-            return DetectionResult(
-                module_id='A',
+            return RiskReport(
                 risk_score=0.5,
-                decision="PASS",
+                suggestion="PASS",
                 reason=f"Acoustic detection error: {str(e)}",
-                metadata={}
+                evidence={}
             )
-        '''
 
-    def _get_suggestion(self, risk_score):
+    def _get_suggestion(self, risk_score: float) -> str:
         if risk_score < self.thresholds['PASS']:
             return "PASS"
         elif risk_score < self.thresholds['CONFIRM']:
+            return "CONFIRM"
+        else:
+            return "REJECT"
             return "CONFIRM"
         else:
             return "REJECT"
