@@ -4,7 +4,7 @@ from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 from pydantic import BaseModel
 import logging
-from modules.module2_ASR.asr_engine import ASRResult
+from asr_engine import ASRResult
 
 logger = logging.getLogger(__name__)
 
@@ -206,7 +206,7 @@ class ConfidenceAnalyzer:
         return float(entropy)
 
     def _calc_confidence_score(self, probs: List[float]) -> float:
-
+        """修复版置信度计算"""
         if not probs:
             return 0.0
 
@@ -245,5 +245,4 @@ class ConfidenceAnalyzer:
 
     def analyze_batch(self, asr_results: List[ASRResult]) -> List[ConfidenceMetrics]:
         """批量分析"""
-
         return [self.analyze(result) for result in asr_results]
