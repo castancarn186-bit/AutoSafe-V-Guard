@@ -1,13 +1,11 @@
 # evaluation_report.py
 """
-修复版评估报告 - 无beta参数版本
+修复版评估报告
 """
 
 import numpy as np
 import librosa
-import re
 
-# 导入正确的类
 from asr_risk_model import EnhancedASRRiskModel, EnhancedConfig
 
 
@@ -17,17 +15,18 @@ class SimpleEvaluation:
     def __init__(self):
         print("ASR风险评估系统 - 简化评估\n" + "=" * 50)
 
-        # 创建优化配置 - 速度优化版
+        # 配置参数 - 匹配 EnhancedConfig
         config = EnhancedConfig(
-            model_size="tiny",  # 改为 tiny 提高速度
-            enable_vad=False,  # 关闭 VAD 提高速度
-            enable_adversarial_defense=True,
+            model_size="tiny",           # 使用 tiny 提高速度
+            enable_vad=False,            # 关闭 VAD
+            enable_adversarial_defense=True,   # 启用防御
             defense_noise_std=0.0001,
-            enable_postprocessing=True,
+            enable_postprocessing=True,        # 启用后处理
+            enable_phonetic_correction=True,   # 启用拼音纠错
+            force_dict_match=True,             # 强制字典匹配
             language="zh"
         )
 
-        # 使用 EnhancedASRRiskModel
         self.risk_model = EnhancedASRRiskModel(config=config)
         self.results = []
 
@@ -35,7 +34,6 @@ class SimpleEvaluation:
         """评估音频"""
         print(f"\n评估: {label}")
 
-        # compute_risk 返回字典
         result = self.risk_model.compute_risk(audio, sample_rate=sample_rate)
 
         self.results.append({
@@ -53,7 +51,6 @@ class SimpleEvaluation:
         print(f"  置信度: {result['confidence']:.3f}")
         print(f"  风险分数: {result['risk_score']:.3f} {result['risk_level']}")
         print(f"  决策: {result['decision']}")
-        print(f"  防御耗时: {result['timings'].get('defense_ms', 0):.1f}ms")
         print(f"  总耗时: {result['timings']['total_ms']:.1f}ms")
 
         return result
@@ -64,7 +61,7 @@ class SimpleEvaluation:
 
         try:
             audio, sr = librosa.load("test.wav", sr=16000, mono=True)
-            print(f"  加载音频: {len(audio) / sr:.1f}秒")
+            print(f"  加载音频: {len(audio)/sr:.1f}秒")
             self.evaluate_audio(audio, label="test.wav")
         except FileNotFoundError:
             print("  ⚠️ 未找到test.wav")
@@ -91,7 +88,6 @@ class SimpleEvaluation:
             print(f"  风险分数: {result['risk_score']:.3f}")
             print(f"  风险等级: {result['risk_level']}")
             print(f"  决策: {result['decision']}")
-            print(f"  防御耗时: {result['defense_ms']:.1f}ms")
             print(f"  总耗时: {result['latency_ms']:.1f}ms")
 
         risk_scores = [r["risk_score"] for r in self.results]
@@ -114,7 +110,7 @@ class SimpleEvaluation:
 def main():
     """主函数"""
     print("=" * 60)
-    print("🚀 ASR风险评估系统 - 对抗性防御验证")
+    print("🚀 ASR风险评估系统 - 评估报告")
     print("=" * 60)
 
     evaluator = SimpleEvaluation()
@@ -132,13 +128,9 @@ def main():
             print(f"  • 模型: tiny")
             print(f"  • VAD: 关闭")
             print(f"  • 对抗性防御: 启用")
+            print(f"  • 拼音纠错: 启用")
             print(f"  • 置信度: {result['confidence']:.3f}")
             print(f"  • 实时性: {result['latency_ms']:.1f}ms")
-
-            if result['latency_ms'] < 500:
-                print(f"\n✅ 实时性达标！")
-            else:
-                print(f"\n⚠️ 实时性超标，建议使用 tiny 模型并关闭 VAD")
 
     finally:
         evaluator.cleanup()
