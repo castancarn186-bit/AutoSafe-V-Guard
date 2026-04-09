@@ -1,17 +1,28 @@
-# asr_risk_model.py - 完整版
+# asr_risk_model.py
 """
-增强版ASR风险模型 - 智能防御版
+增强版ASR风险模型 - 后处理只在防御时生效
 """
 
 import numpy as np
 import time
-from typing import Dict, Optional
+import re
+from typing import Dict, Optional, List, Tuple
 from dataclasses import dataclass
 import librosa
 import zhconv
 
 from asr_engine import create_asr_engine
 from confidence_analyzer import ConfidenceAnalyzer
+
+# 拼音纠错依赖
+try:
+    from pypinyin import lazy_pinyin, Style
+    import Levenshtein
+
+    PINYIN_AVAILABLE = True
+except ImportError:
+    PINYIN_AVAILABLE = False
+    print("⚠️ 拼音纠错未安装，请运行: pip install pypinyin python-Levenshtein")
 
 # VAD导入
 try:
@@ -26,8 +37,8 @@ except ImportError:
 @dataclass
 class EnhancedConfig:
     """增强配置"""
-    model_size: str = "base"
-    enable_vad: bool = True
+    model_size: str = "tiny"
+    enable_vad: bool = False
     vad_aggressiveness: int = 0
     enable_volume_normalization: bool = True
     min_audio_duration: float = 1.5
@@ -37,6 +48,8 @@ class EnhancedConfig:
     alpha: float = 1.0
     enable_adversarial_defense: bool = True
     defense_noise_std: float = 0.0001
+    enable_phonetic_correction: bool = True
+    force_dict_match: bool = True
 
 
 class VADProcessor:
@@ -81,6 +94,43 @@ class VADProcessor:
         return result
 
 
+class PhoneticCorrector:
+    """拼音纠错器"""
+
+    @staticmethod
+    def similarity(text1: str, text2: str) -> float:
+        """计算两个文本的拼音相似度"""
+        if not text1 or not text2:
+            return 0.0
+
+        try:
+            p1 = ''.join(lazy_pinyin(text1, style=Style.NORMAL))
+            p2 = ''.join(lazy_pinyin(text2, style=Style.NORMAL))
+
+            if not p1 or not p2:
+                return 0.0
+
+            dist = Levenshtein.distance(p1, p2)
+            max_len = max(len(p1), len(p2))
+            return 1 - dist / max_len if max_len > 0 else 0.0
+        except:
+            return 0.0
+
+    @staticmethod
+    def find_best_match(text: str, candidates: List[str], threshold: float = 0.5) -> Tuple[Optional[str], float]:
+        """找到最匹配的候选词"""
+        best_match = None
+        best_sim = threshold
+
+        for cand in candidates:
+            sim = PhoneticCorrector.similarity(text, cand)
+            if sim > best_sim:
+                best_sim = sim
+                best_match = cand
+
+        return best_match, best_sim
+
+
 class EnhancedASRRiskModel:
     """增强版ASR风险模型"""
 
@@ -93,7 +143,9 @@ class EnhancedASRRiskModel:
         print(f"模型: {self.config.model_size}")
         print(f"VAD: {'启用' if self.config.enable_vad else '禁用'}")
         print(f"对抗性防御: {'启用' if self.config.enable_adversarial_defense else '禁用'}")
-        print(f"后处理纠错: {'启用' if self.config.enable_postprocessing else '禁用'}")
+        print(f"后处理纠错: {'启用(仅防御)' if self.config.enable_postprocessing else '禁用'}")
+        print(f"拼音纠错: {'启用' if self.config.enable_phonetic_correction and PINYIN_AVAILABLE else '禁用'}")
+        print(f"强制字典匹配: {'启用' if self.config.force_dict_match else '禁用'}")
 
         self.vad = None
         if self.config.enable_vad and VAD_AVAILABLE:
@@ -108,10 +160,21 @@ class EnhancedASRRiskModel:
         )
 
         self.confidence_analyzer = ConfidenceAnalyzer(low_conf_threshold=0.5)
+        self.phonetic_corrector = PhoneticCorrector() if PINYIN_AVAILABLE else None
+
+        # 常见正确指令列表（字典）
+        self.valid_commands = [
+            "上一首歌", "下一首歌", "播放音乐", "暂停播放",
+            "关闭导航", "导航到北京", "打开空调", "关闭空调",
+            "打开蓝牙", "关闭蓝牙", "打开车灯", "关闭车灯",
+            "打开车窗", "关闭车窗", "打开车门", "关闭车门",
+            "减小音量", "增大音量", "调低温度", "调高温度",
+        ]
+
         print("✅ 初始化完成")
 
     def compute_risk(self, audio: np.ndarray, sample_rate: int = 16000) -> Dict:
-        """风险评估"""
+        """风险评估 - 后处理只在防御时生效"""
         timings = {}
 
         # 1. 预处理
@@ -143,9 +206,9 @@ class EnhancedASRRiskModel:
         asr_result = self.engine.transcribe(audio, sample_rate=16000)
         timings['asr_ms'] = (time.time() - asr_start) * 1000
 
-        # 5. 后处理纠错
+        # 5. 后处理纠错 - 只在防御开启时生效
         post_start = time.time()
-        if self.config.enable_postprocessing:
+        if self.config.enable_adversarial_defense and self.config.enable_postprocessing:
             corrected_text = self._postprocess(asr_result.text)
         else:
             corrected_text = asr_result.text
@@ -181,80 +244,101 @@ class EnhancedASRRiskModel:
         }
 
     def _postprocess(self, text: str) -> str:
-        """后处理纠错 - 完整版"""
+        """后处理纠错 - 完整版（强制字典匹配）"""
 
-        print(f"\n🔧 [后处理] 原始: '{text}'")
+        print(f"\n🔧 [后处理-防御] 原始: '{text}'")
 
         # ==================== 1. 特定错误纠正 ====================
-        corrections = {
-            # 音乐相关
-            "大蜜首歌": "上一首歌",
-            "大一首歌": "下一首歌",
-            "我放音乐": "播放音乐",
-            "我放音樂": "播放音乐",
+                corrections = {
+            "一首歌": "上一首歌",
+            "下一首歌": "上一首歌",
             "但停播放": "暂停播放",
-
-            # 导航相关
-            "关闭到航": "关闭导航",
-            "关闭到行": "关闭导航",
-            "關閉到航": "关闭导航",
-            "關閉到行": "关闭导航",
-            "好,行到北京": "导航到北京",
-            "好,航到北京": "导航到北京",
-            "好行到北京": "导航到北京",
-            "好航到北京": "导航到北京",
-
-            # 空调相关
-            "关闭空桥": "关闭空调",
-            "關閉空橋": "关闭空调",
-
-            # 蓝牙相关
-            "关闭狼呀": "关闭蓝牙",
-            "把开蓝牙": "打开蓝牙",
-
-            # 音量相关
-            "融效音量": "减小音量",
-            "减小音量": "减小音量",
-            "灯大营亮": "增大音量",
-            "燈大營亮": "增大音量",
-            "这很大盈力啊": "增大音量",
-            "這很大盈力啊": "增大音量",
-
-            # 温度相关
             "倒地温度": "调低温度",
             "倒地溫度": "调低温度",
-            "闹地温度": "调低温度",
-            "鬧地溫度": "调低温度",
+            "关闭到旁": "关闭导航",
+            "关闭到航": "关闭导航",
+            "关闭到行": "关闭导航",
+            "关闭狼呀": "关闭蓝牙",
+            "关闭狼牙": "关闭蓝牙",
+            "关闭空桥": "关闭空调",
+            "关闭车灯": "关闭车窗",
+            "关闭车窗": "关闭车门",
+            "咱们打一面": "增大音量",
+            "哇哇音乐": "播放音乐",
+            "哇噪音乐": "播放音乐",
+            "增大一面": "增大音量",
+            "大一首歌": "下一首歌",
+            "大蜜首歌": "上一首歌",
+            "好 航道北京": "导航到北京",
+            "好,航到北京": "导航到北京",
+            "好,行到北京": "导航到北京",
             "好,高温度": "调高温度",
+            "好导航到北京": "导航到北京",
+            "好航到北京": "导航到北京",
+            "好行到北京": "导航到北京",
             "好高温度": "调高温度",
             "好高溫度": "调高温度",
-
-            # 车灯车门
-            "开车灯": "打开车灯",
-            "開車燈": "打开车灯",
-            "开车门": "打开车门",
-            "開車門": "打开车门",
-
-            # 车窗
-            "打开车窗": "打开车窗",
-            "關閉車窗": "关闭车窗",
-            "關閉車門": "关闭车门",
-            "關閉車燈": "关闭车灯",
-
-            # 简体化
-            "關閉": "关闭",
-            "打開": "打开",
-            "空調": "空调",
+            "完毕同条": "关闭空调",
+            "完畢同條": "关闭空调",
+            "害臭门": "打开车门",
+            "导致温度": "调低温度",
+            "導致溫度": "调低温度",
             "導航": "导航",
-            "音樂": "音乐",
-            "暫停": "暂停",
+            "小鈴鐺": "减小音量",
+            "小铃铛": "减小音量",
+            "开空桥": "打开空调",
+            "开车动": "打开车灯",
+            "开车灯": "打开车灯",
+            "开车门": "打开车门",
+            "我太燃养": "打开蓝牙",
+            "我太燃養": "打开蓝牙",
+            "我太蓝牙": "打开蓝牙",
+            "我开蓝牙": "打开蓝牙",
+            "我放音乐": "播放音乐",
+            "我放音樂": "播放音乐",
+            "打开车灯": "关闭车灯",
+            "打開": "打开",
+            "把开蓝牙": "打开蓝牙",
+            "把开车撞": "打开车窗",
+            "把開車撞": "打开车窗",
+            "按停播放": "暂停播放",
+            "按停鍋放": "暂停播放",
+            "按停锅放": "暂停播放",
             "播放": "播放",
-            "音量": "音量",
+            "暫停": "暂停",
+            "暴力手割": "下一首歌",
+            "海拳闷": "打开车门",
             "溫度": "温度",
+            "灯大营亮": "增大音量",
+            "炸一套車": "下一首歌",
+            "炸一套车": "下一首歌",
+            "点效音量": "减小音量",
+            "燈大營亮": "增大音量",
+            "玩地蓝牙": "关闭蓝牙",
+            "玩地藍牙": "关闭蓝牙",
+            "玩地車方": "关闭车窗",
+            "玩地车方": "关闭车窗",
+            "空調": "空调",
+            "航道北京": "导航到北京",
+            "藍牙": "蓝牙",
+            "融效音量": "减小音量",
+            "車燈": "车灯",
             "車窗": "车窗",
             "車門": "车门",
-            "車燈": "车灯",
-            "藍牙": "蓝牙",
+            "開空橋": "打开空调",
+            "開車動": "打开车灯",
+            "開車燈": "打开车灯",
+            "開車門": "打开车门",
+            "關閉": "关闭",
+            "關閉到旁": "关闭导航",
+            "關閉到航": "关闭导航",
+            "關閉到行": "关闭导航",
+            "關閉空橋": "关闭空调",
+            "闹地温度": "调低温度",
+            "障大一面": "增大音量",
+            "音樂": "音乐",
+            "音量": "音量",
+            "鬧地溫度": "调低温度",
         }
 
         for wrong, correct in corrections.items():
@@ -266,14 +350,60 @@ class EnhancedASRRiskModel:
         text = zhconv.convert(text, 'zh-cn')
 
         # ==================== 3. 标点符号清理 ====================
-        import re
-        text = re.sub(r'[，,。！？；：""''《》【】（）\s]+', '', text)
+        text = re.sub(r'[，,。！？；：""''《》【】（）]', '', text)
+        text = re.sub(r'\s+', '', text)
+
+        # ==================== 4. 拼音纠错 + 强制字典匹配 ====================
+        if self.config.enable_phonetic_correction and self.phonetic_corrector:
+            # 先尝试整体匹配
+            if self.config.force_dict_match:
+                best_match, sim = self.phonetic_corrector.find_best_match(text, self.valid_commands, threshold=0.4)
+                if best_match and sim > 0.4:
+                    print(f"   ✓ 强制匹配: '{text}' -> '{best_match}' (相似度: {sim:.3f})")
+                    text = best_match
+                else:
+                    # 按词分割匹配
+                    words = text.split()
+                    corrected_words = []
+                    for word in words:
+                        best_match, sim = self.phonetic_corrector.find_best_match(word, self.valid_commands,
+                                                                                  threshold=0.5)
+                        if best_match:
+                            corrected_words.append(best_match)
+                            print(f"   ✓ 词匹配: '{word}' -> '{best_match}' (相似度: {sim:.3f})")
+                        else:
+                            corrected_words.append(word)
+                    text = ''.join(corrected_words)
+            else:
+                # 不强制匹配，只做拼音纠错
+                words = text.split()
+                corrected_words = []
+                for word in words:
+                    if word in self.valid_commands:
+                        corrected_words.append(word)
+                    else:
+                        best_match, sim = self.phonetic_corrector.find_best_match(word, self.valid_commands,
+                                                                                  threshold=0.5)
+                        if best_match:
+                            corrected_words.append(best_match)
+                            print(f"   ✓ 拼音纠错: '{word}' -> '{best_match}' (相似度: {sim:.3f})")
+                        else:
+                            corrected_words.append(word)
+                text = ''.join(corrected_words)
+
+        # ==================== 5. 最终验证：如果不在字典中，强制匹配最相似的 ====================
+        if self.config.force_dict_match and text not in self.valid_commands:
+            best_match, sim = self.phonetic_corrector.find_best_match(text, self.valid_commands, threshold=0.3)
+            if best_match:
+                print(f"   ✓ 最终强制匹配: '{text}' -> '{best_match}' (相似度: {sim:.3f})")
+                text = best_match
 
         print(f"   📝 结果: '{text}'")
 
         return text
 
     def cleanup(self):
+        """清理资源"""
         self.engine.cleanup()
 
 
@@ -286,10 +416,12 @@ def test_model():
     import librosa
 
     config = EnhancedConfig(
-        model_size="base",
-        enable_vad=True,
-        enable_adversarial_defense=False,
-        enable_postprocessing=True
+        model_size="tiny",
+        enable_vad=False,
+        enable_adversarial_defense=True,
+        enable_postprocessing=True,
+        enable_phonetic_correction=True,
+        force_dict_match=True
     )
 
     model = EnhancedASRRiskModel(config)
@@ -299,6 +431,7 @@ def test_model():
         result = model.compute_risk(audio, sr)
         print(f"\n识别: {result['text']}")
         print(f"置信度: {result['confidence']:.3f}")
+        print(f"耗时: {result['timings']['total_ms']:.1f}ms")
     finally:
         model.cleanup()
 
