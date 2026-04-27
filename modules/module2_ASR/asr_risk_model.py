@@ -1,6 +1,6 @@
 # asr_risk_model.py
 """
-增强版ASR风险模型 - 后处理只在防御时生效
+增强版ASR风险模型 - 按词匹配优先版 + 强制指令集匹配
 """
 
 import numpy as np
@@ -13,6 +13,7 @@ import zhconv
 
 from asr_engine import create_asr_engine
 from confidence_analyzer import ConfidenceAnalyzer
+from audio_preprocessor import AudioPreprocessor
 
 # 拼音纠错依赖
 try:
@@ -48,6 +49,7 @@ class EnhancedConfig:
     alpha: float = 1.0
     enable_adversarial_defense: bool = True
     defense_noise_std: float = 0.0001
+    defense_strength: str = "medium"
     enable_phonetic_correction: bool = True
     force_dict_match: bool = True
 
@@ -99,17 +101,13 @@ class PhoneticCorrector:
 
     @staticmethod
     def similarity(text1: str, text2: str) -> float:
-        """计算两个文本的拼音相似度"""
         if not text1 or not text2:
             return 0.0
-
         try:
             p1 = ''.join(lazy_pinyin(text1, style=Style.NORMAL))
             p2 = ''.join(lazy_pinyin(text2, style=Style.NORMAL))
-
             if not p1 or not p2:
                 return 0.0
-
             dist = Levenshtein.distance(p1, p2)
             max_len = max(len(p1), len(p2))
             return 1 - dist / max_len if max_len > 0 else 0.0
@@ -118,21 +116,18 @@ class PhoneticCorrector:
 
     @staticmethod
     def find_best_match(text: str, candidates: List[str], threshold: float = 0.5) -> Tuple[Optional[str], float]:
-        """找到最匹配的候选词"""
         best_match = None
         best_sim = threshold
-
         for cand in candidates:
             sim = PhoneticCorrector.similarity(text, cand)
             if sim > best_sim:
                 best_sim = sim
                 best_match = cand
-
         return best_match, best_sim
 
 
 class EnhancedASRRiskModel:
-    """增强版ASR风险模型"""
+    """增强版ASR风险模型 - 按词匹配优先 + 强制指令集匹配"""
 
     def __init__(self, config: Optional[EnhancedConfig] = None):
         self.config = config or EnhancedConfig()
@@ -143,6 +138,7 @@ class EnhancedASRRiskModel:
         print(f"模型: {self.config.model_size}")
         print(f"VAD: {'启用' if self.config.enable_vad else '禁用'}")
         print(f"对抗性防御: {'启用' if self.config.enable_adversarial_defense else '禁用'}")
+        print(f"防御强度: {self.config.defense_strength}")
         print(f"后处理纠错: {'启用(仅防御)' if self.config.enable_postprocessing else '禁用'}")
         print(f"拼音纠错: {'启用' if self.config.enable_phonetic_correction and PINYIN_AVAILABLE else '禁用'}")
         print(f"强制字典匹配: {'启用' if self.config.force_dict_match else '禁用'}")
@@ -162,19 +158,98 @@ class EnhancedASRRiskModel:
         self.confidence_analyzer = ConfidenceAnalyzer(low_conf_threshold=0.5)
         self.phonetic_corrector = PhoneticCorrector() if PINYIN_AVAILABLE else None
 
-        # 常见正确指令列表（字典）
+        self.audio_preprocessor = AudioPreprocessor(
+            sample_rate=16000,
+            enable_adversarial_defense=self.config.enable_adversarial_defense,
+            defense_strength=self.config.defense_strength
+        )
+
+        # 有效指令列表（强制匹配目标）
         self.valid_commands = [
-            "上一首歌", "下一首歌", "播放音乐", "暂停播放",
-            "关闭导航", "导航到北京", "打开空调", "关闭空调",
-            "打开蓝牙", "关闭蓝牙", "打开车灯", "关闭车灯",
-            "打开车窗", "关闭车窗", "打开车门", "关闭车门",
-            "减小音量", "增大音量", "调低温度", "调高温度",
+            # ==================== 唤醒与通用 ====================
+            "你好小V", "退出", "取消", "返回", "帮助", "确认", "是的", "不是",
+            "今天天气怎么样", "明天天气", "现在几点了", "今天星期几",
+
+            # ==================== 车窗控制 ====================
+            "打开车窗", "关闭车窗", "打开天窗", "关闭天窗",
+            "打开左前车窗", "关闭左前车窗", "打开右前车窗", "关闭右前车窗",
+            "打开左后车窗", "关闭左后车窗", "打开右后车窗", "关闭右后车窗",
+            "车窗留缝",
+
+            # ==================== 车门控制 ====================
+            "打开车门", "关闭车门", "打开后备箱", "关闭后备箱", "打开引擎盖", "关闭引擎盖",
+            "打开左前门", "关闭左前门", "打开右前门", "关闭右前门",
+            "打开左后门", "关闭左后门", "打开右后门", "关闭右后门",
+
+            # ==================== 车灯控制 ====================
+            "打开车灯", "关闭车灯", "打开近光灯", "关闭近光灯",
+            "打开远光灯", "关闭远光灯", "打开雾灯", "关闭雾灯",
+            "打开示廓灯", "关闭示廓灯", "打开双闪", "关闭双闪",
+            "打开日间行车灯", "关闭日间行车灯", "打开氛围灯", "关闭氛围灯",
+
+            # ==================== 空调控制 ====================
+            "打开空调", "关闭空调", "调高温度", "调低温度",
+            "温度调到16度", "温度调到18度", "温度调到20度", "温度调到22度",
+            "温度调到24度", "温度调到26度", "温度调到28度",
+            "打开制冷", "关闭制冷", "打开制热", "关闭制热",
+            "打开内循环", "关闭内循环", "打开外循环", "关闭外循环",
+            "打开前除雾", "关闭前除雾", "打开后除雾", "关闭后除雾",
+            "风量大一点", "风量小一点", "打开A/C", "关闭A/C", "自动空调",
+
+            # ==================== 座椅控制 ====================
+            "座椅加热", "关闭座椅加热", "座椅通风", "关闭座椅通风",
+            "座椅按摩", "关闭座椅按摩", "座椅前移", "座椅后移",
+            "座椅靠背放倒", "座椅靠背调直", "记忆座椅1", "记忆座椅2", "记忆座椅3",
+
+            # ==================== 后视镜控制 ====================
+            "折叠后视镜", "展开后视镜", "调节左后视镜", "调节右后视镜",
+
+            # ==================== 多媒体控制 ====================
+            "播放音乐", "暂停播放", "停止播放", "继续播放",
+            "上一首", "上一首歌", "下一首", "下一首歌",
+            "重复播放", "随机播放", "打开歌词", "关闭歌词",
+            "打开收音机", "关闭收音机", "切换电台", "上一个电台", "下一个电台",
+
+            # ==================== 音量控制 ====================
+            "增大音量", "减小音量", "音量加", "音量减", "静音", "取消静音",
+            "音量调到10", "音量调到20", "音量调到30", "音量最大", "音量最小",
+
+            # ==================== 蓝牙控制 ====================
+            "打开蓝牙", "关闭蓝牙", "连接蓝牙", "断开蓝牙",
+
+            # ==================== 导航控制 ====================
+            "打开导航", "关闭导航", "导航到家", "导航到公司",
+            "导航到加油站", "导航到充电站", "导航到停车场", "导航到最近的地铁站",
+            "导航到北京", "导航到上海", "导航到广州", "导航到深圳",
+            "开始导航", "停止导航", "查看全程", "查看路况",
+            "躲避拥堵", "重新规划", "放大地图", "缩小地图", "2D视图", "3D视图",
+            "导航音量调大", "导航音量调小",
+
+            # ==================== 电话通讯 ====================
+            "接听电话", "挂断电话", "拒接电话", "拨打电话", "重拨",
+            "静音通话", "取消静音", "切换听筒", "切换免提",
+
+            # ==================== 驾驶辅助 ====================
+            "打开巡航", "关闭巡航", "巡航加速", "巡航减速",
+            "车道保持开启", "车道保持关闭", "自动泊车", "退出泊车",
+            "打开360影像", "关闭360影像",
+
+            # ==================== 车辆设置 ====================
+            "驾驶模式运动", "驾驶模式经济", "驾驶模式舒适",
+            "能量回收高", "能量回收中", "能量回收低",
+            "打开ESP", "关闭ESP", "打开陡坡缓降", "关闭陡坡缓降",
+            "查看胎压", "查看电量", "查看续航",
+
+            # ==================== 行车记录仪 ====================
+            "打开行车记录仪", "关闭行车记录仪", "拍照", "录像", "紧急录制",
+
+            # ==================== 雨刮控制 ====================
+            "打开雨刮", "关闭雨刮", "雨刮一档", "雨刮二档", "雨刮三档", "雨刮自动",
         ]
 
         print("✅ 初始化完成")
 
     def compute_risk(self, audio: np.ndarray, sample_rate: int = 16000) -> Dict:
-        """风险评估 - 后处理只在防御时生效"""
         timings = {}
 
         # 1. 预处理
@@ -194,9 +269,7 @@ class EnhancedASRRiskModel:
         # 3. 防御处理
         if self.config.enable_adversarial_defense:
             defense_start = time.time()
-            noise = np.random.normal(0, self.config.defense_noise_std, audio.shape)
-            audio = audio + noise
-            audio = np.clip(audio, -0.99, 0.99)
+            audio = self.audio_preprocessor.prepare_for_asr(audio, sample_rate=16000, apply_defense=True)
             timings['defense_ms'] = (time.time() - defense_start) * 1000
         else:
             timings['defense_ms'] = 0
@@ -206,7 +279,14 @@ class EnhancedASRRiskModel:
         asr_result = self.engine.transcribe(audio, sample_rate=16000)
         timings['asr_ms'] = (time.time() - asr_start) * 1000
 
-        # 5. 后处理纠错 - 只在防御开启时生效
+        if not asr_result.success:
+            return {
+                'text': '', 'original_text': '', 'confidence': 0.0,
+                'risk_score': 1.0, 'risk_level': '高风险 ❌', 'decision': '拒绝',
+                'timings': timings
+            }
+
+        # 5. 后处理纠错
         post_start = time.time()
         if self.config.enable_adversarial_defense and self.config.enable_postprocessing:
             corrected_text = self._postprocess(asr_result.text)
@@ -244,166 +324,159 @@ class EnhancedASRRiskModel:
         }
 
     def _postprocess(self, text: str) -> str:
-        """后处理纠错 - 完整版（强制字典匹配）"""
+        """后处理纠错 - 按词匹配优先 + 强制指令集匹配"""
 
         print(f"\n🔧 [后处理-防御] 原始: '{text}'")
 
-        # ==================== 1. 特定错误纠正 ====================
-                corrections = {
-            "一首歌": "上一首歌",
-            "下一首歌": "上一首歌",
-            "但停播放": "暂停播放",
-            "倒地温度": "调低温度",
-            "倒地溫度": "调低温度",
-            "关闭到旁": "关闭导航",
-            "关闭到航": "关闭导航",
-            "关闭到行": "关闭导航",
-            "关闭狼呀": "关闭蓝牙",
-            "关闭狼牙": "关闭蓝牙",
-            "关闭空桥": "关闭空调",
-            "关闭车灯": "关闭车窗",
-            "关闭车窗": "关闭车门",
-            "咱们打一面": "增大音量",
-            "哇哇音乐": "播放音乐",
-            "哇噪音乐": "播放音乐",
-            "增大一面": "增大音量",
-            "大一首歌": "下一首歌",
-            "大蜜首歌": "上一首歌",
-            "好 航道北京": "导航到北京",
-            "好,航到北京": "导航到北京",
-            "好,行到北京": "导航到北京",
-            "好,高温度": "调高温度",
-            "好导航到北京": "导航到北京",
-            "好航到北京": "导航到北京",
-            "好行到北京": "导航到北京",
-            "好高温度": "调高温度",
-            "好高溫度": "调高温度",
-            "完毕同条": "关闭空调",
-            "完畢同條": "关闭空调",
-            "害臭门": "打开车门",
-            "导致温度": "调低温度",
-            "導致溫度": "调低温度",
-            "導航": "导航",
-            "小鈴鐺": "减小音量",
-            "小铃铛": "减小音量",
-            "开空桥": "打开空调",
-            "开车动": "打开车灯",
-            "开车灯": "打开车灯",
-            "开车门": "打开车门",
-            "我太燃养": "打开蓝牙",
-            "我太燃養": "打开蓝牙",
-            "我太蓝牙": "打开蓝牙",
-            "我开蓝牙": "打开蓝牙",
-            "我放音乐": "播放音乐",
-            "我放音樂": "播放音乐",
-            "打开车灯": "关闭车灯",
-            "打開": "打开",
-            "把开蓝牙": "打开蓝牙",
-            "把开车撞": "打开车窗",
-            "把開車撞": "打开车窗",
-            "按停播放": "暂停播放",
-            "按停鍋放": "暂停播放",
-            "按停锅放": "暂停播放",
-            "播放": "播放",
-            "暫停": "暂停",
-            "暴力手割": "下一首歌",
-            "海拳闷": "打开车门",
-            "溫度": "温度",
-            "灯大营亮": "增大音量",
-            "炸一套車": "下一首歌",
-            "炸一套车": "下一首歌",
-            "点效音量": "减小音量",
-            "燈大營亮": "增大音量",
-            "玩地蓝牙": "关闭蓝牙",
-            "玩地藍牙": "关闭蓝牙",
-            "玩地車方": "关闭车窗",
-            "玩地车方": "关闭车窗",
-            "空調": "空调",
-            "航道北京": "导航到北京",
-            "藍牙": "蓝牙",
-            "融效音量": "减小音量",
-            "車燈": "车灯",
-            "車窗": "车窗",
-            "車門": "车门",
-            "開空橋": "打开空调",
-            "開車動": "打开车灯",
-            "開車燈": "打开车灯",
-            "開車門": "打开车门",
-            "關閉": "关闭",
-            "關閉到旁": "关闭导航",
-            "關閉到航": "关闭导航",
-            "關閉到行": "关闭导航",
-            "關閉空橋": "关闭空调",
-            "闹地温度": "调低温度",
-            "障大一面": "增大音量",
-            "音樂": "音乐",
-            "音量": "音量",
-            "鬧地溫度": "调低温度",
-        }
-
-        for wrong, correct in corrections.items():
-            if wrong in text:
-                text = text.replace(wrong, correct)
-                print(f"   ✓ 替换: '{wrong}' -> '{correct}'")
-
-        # ==================== 2. 繁简转换 ====================
+        # ==================== 1. 繁简转换 ====================
         text = zhconv.convert(text, 'zh-cn')
+        print(f"   ✓ 繁简转换: '{text}'")
 
-        # ==================== 3. 标点符号清理 ====================
+        # ==================== 2. 标点符号清理 ====================
         text = re.sub(r'[，,。！？；：""''《》【】（）]', '', text)
         text = re.sub(r'\s+', '', text)
 
-        # ==================== 4. 拼音纠错 + 强制字典匹配 ====================
+        # ==================== 3. 动词纠错 ====================
+        verb_corrections = {
+            "把开": "打开", "我开": "打开", "玩开": "打开", "拨开": "打开", "大开": "打开",
+            "关地": "关闭", "完毕": "关闭", "玩地": "关闭",
+            "好高": "调高", "超高": "调高", "太高": "调高",
+            "倒地": "调低", "导致": "调低",
+            "小": "减小", "融效": "减小", "点效": "减小",
+            "灯大": "增大", "障大": "增大", "真大": "增大",
+            "我放": "播放", "哇放": "播放", "拨放": "播放",
+            "但停": "暂停", "按停": "暂停",
+            "导肮": "导航", "好行": "导航", "好航": "导航", "好像": "导航","打开导航": "导航",
+            "炸一": "下一", "一套": "一首",
+            "海拳": "打开", "这么": "增大",
+        }
+
+        for wrong, correct in verb_corrections.items():
+            if wrong in text:
+                text = text.replace(wrong, correct)
+                print(f"   ✓ 动词纠错: '{wrong}' -> '{correct}'")
+
+        # ==================== 4. 名词纠错 ====================
+        noun_corrections = {
+            "柱门": "车门", "车创": "车窗", "车双": "车窗", "车装": "车窗",
+            "车吧": "车门", "车动": "车灯", "车们": "车门",
+            "空桥": "空调", "空橋": "空调", "通告": "空调",
+            "狼牙": "蓝牙", "狼呀": "蓝牙", "兰牙": "蓝牙", "地藍": "蓝牙",
+            "岛航": "导航", "到旁": "导航",
+            "音了": "音乐", "大音乐": "音量",
+            "音亮": "音量", "营亮": "音量", "一面": "音量",
+            "温渡": "温度", "寶寄溫固": "温度",
+            "天创": "天窗", "车方": "车窗", "车撞": "车窗",
+            "后车厢": "后备箱", "后箱": "后备箱",
+            "雨刷": "雨刮", "吐吐": "车灯", "車燈": "车灯", "車動": "车灯",
+            "一套車": "一首歌", "我太燃养": "蓝牙", "我太燃養": "蓝牙",
+            "冰冰痛": "车门", "王毕端": "车门", "海拳闷": "车门",
+            "一吋燈": "车灯",
+            "一吋灯": "车灯",
+            "皮疙瘩": "车门",
+            "航道北京": "导航到北京",
+            "航到北京": "导航到北京",
+        }
+
+        for wrong, correct in noun_corrections.items():
+            if wrong in text:
+                text = text.replace(wrong, correct)
+                print(f"   ✓ 名词纠错: '{wrong}' -> '{correct}'")
+
+        # ==================== 5. 按词匹配 ====================
+        verbs = [
+            "打开", "关闭", "开启", "关掉", "合上", "收起", "展开", "升起", "降下",
+            "调高", "调低", "增大", "减小", "增加", "减少", "提高", "降低", "调大", "调小",
+            "播放", "暂停", "停止", "继续", "开始",
+            "导航", "查找", "搜索", "规划", "定位",
+            "接听", "挂断", "拒绝", "拨号", "拍照", "录像", "切换", "设置",
+            "上一", "下一",
+        ]
+
+        nouns = [
+            "车窗", "左前车窗", "右前车窗", "左后车窗", "右后车窗", "天窗",
+            "车门", "左前门", "右前门", "左后门", "右后门", "后备箱", "引擎盖",
+            "车灯", "近光灯", "远光灯", "雾灯", "示廓灯", "双闪", "日间行车灯", "氛围灯",
+            "空调", "温度", "制冷", "制热", "内循环", "外循环", "前除雾", "后除雾", "风量", "AC",
+            "座椅", "座椅加热", "座椅通风", "座椅按摩", "座椅位置",
+            "音乐", "收音机", "电台", "蓝牙", "歌词", "列表", "收藏", "音量",
+            "导航", "地图", "路线", "路况", "目的地",
+            "电话", "通讯录", "联系人",
+            "雨刮", "行车记录仪", "充电口", "油箱盖", "胎压", "电量", "续航",
+            "一首歌",
+        ]
+
+        # 去重并按长度排序
+        verbs = list(set(verbs))
+        nouns = list(set(nouns))
+        verbs.sort(key=len, reverse=True)
+        nouns.sort(key=len, reverse=True)
+
+        found_verb = None
+        found_noun = None
+
+        for v in verbs:
+            if v in text:
+                found_verb = v
+                break
+
+        for n in nouns:
+            if n in text:
+                found_noun = n
+                break
+
+        if found_verb and found_noun:
+            if found_verb in found_noun:
+                result = found_noun
+            else:
+                result = f"{found_verb}{found_noun}"
+            print(f"   ✓ 按词匹配: '{found_verb}' + '{found_noun}' -> '{result}'")
+            text = result
+
+        # ==================== 6. 拼音纠错（兜底） ====================
         if self.config.enable_phonetic_correction and self.phonetic_corrector:
-            # 先尝试整体匹配
-            if self.config.force_dict_match:
-                best_match, sim = self.phonetic_corrector.find_best_match(text, self.valid_commands, threshold=0.4)
-                if best_match and sim > 0.4:
-                    print(f"   ✓ 强制匹配: '{text}' -> '{best_match}' (相似度: {sim:.3f})")
+            if text not in self.valid_commands:
+                best_match, sim = self.phonetic_corrector.find_best_match(text, self.valid_commands, threshold=0.5)
+                if best_match:
+                    print(f"   ✓ 拼音纠错: '{text}' -> '{best_match}' (相似度: {sim:.3f})")
+                    text = best_match
+
+        # ==================== 7. 最终强制匹配到有效指令集 ====================
+        if self.config.force_dict_match and text not in self.valid_commands:
+            # 尝试按词组合
+            found_verb = None
+            found_noun = None
+            for v in verbs:
+                if v in text:
+                    found_verb = v
+                    break
+            for n in nouns:
+                if n in text:
+                    found_noun = n
+                    break
+            if found_verb and found_noun:
+                if found_verb in found_noun:
+                    text = found_noun
+                else:
+                    text = f"{found_verb}{found_noun}"
+                print(f"   ✓ 最终组合: '{found_verb}' + '{found_noun}' -> '{text}'")
+
+            # 如果还不在指令集中，用拼音匹配最相似的
+            if text not in self.valid_commands:
+                best_match, sim = self.phonetic_corrector.find_best_match(text, self.valid_commands, threshold=0.3)
+                if best_match:
+                    print(f"   ✓ 最终强制匹配: '{text}' -> '{best_match}' (相似度: {sim:.3f})")
                     text = best_match
                 else:
-                    # 按词分割匹配
-                    words = text.split()
-                    corrected_words = []
-                    for word in words:
-                        best_match, sim = self.phonetic_corrector.find_best_match(word, self.valid_commands,
-                                                                                  threshold=0.5)
-                        if best_match:
-                            corrected_words.append(best_match)
-                            print(f"   ✓ 词匹配: '{word}' -> '{best_match}' (相似度: {sim:.3f})")
-                        else:
-                            corrected_words.append(word)
-                    text = ''.join(corrected_words)
-            else:
-                # 不强制匹配，只做拼音纠错
-                words = text.split()
-                corrected_words = []
-                for word in words:
-                    if word in self.valid_commands:
-                        corrected_words.append(word)
-                    else:
-                        best_match, sim = self.phonetic_corrector.find_best_match(word, self.valid_commands,
-                                                                                  threshold=0.5)
-                        if best_match:
-                            corrected_words.append(best_match)
-                            print(f"   ✓ 拼音纠错: '{word}' -> '{best_match}' (相似度: {sim:.3f})")
-                        else:
-                            corrected_words.append(word)
-                text = ''.join(corrected_words)
-
-        # ==================== 5. 最终验证：如果不在字典中，强制匹配最相似的 ====================
-        if self.config.force_dict_match and text not in self.valid_commands:
-            best_match, sim = self.phonetic_corrector.find_best_match(text, self.valid_commands, threshold=0.3)
-            if best_match:
-                print(f"   ✓ 最终强制匹配: '{text}' -> '{best_match}' (相似度: {sim:.3f})")
-                text = best_match
+                    # 最后兜底：输出默认指令
+                    print(f"   ⚠️ 无法匹配，使用默认指令")
+                    text = "打开导航"
 
         print(f"   📝 结果: '{text}'")
 
         return text
 
     def cleanup(self):
-        """清理资源"""
         self.engine.cleanup()
 
 
@@ -412,13 +485,13 @@ OptimizedConfig = EnhancedConfig
 
 
 def test_model():
-    """测试模型"""
     import librosa
 
     config = EnhancedConfig(
         model_size="tiny",
         enable_vad=False,
         enable_adversarial_defense=True,
+        defense_strength="medium",
         enable_postprocessing=True,
         enable_phonetic_correction=True,
         force_dict_match=True
