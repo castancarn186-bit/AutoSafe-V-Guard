@@ -324,7 +324,7 @@ class EnhancedASRRiskModel:
         }
 
     def _postprocess(self, text: str) -> str:
-        """后处理纠错 - 按词匹配优先 + 强制指令集匹配"""
+        """后处理纠错 - 按词匹配 + 按词拼音纠错"""
 
         print(f"\n🔧 [后处理-防御] 原始: '{text}'")
 
@@ -346,7 +346,7 @@ class EnhancedASRRiskModel:
             "灯大": "增大", "障大": "增大", "真大": "增大",
             "我放": "播放", "哇放": "播放", "拨放": "播放",
             "但停": "暂停", "按停": "暂停",
-            "导肮": "导航", "好行": "导航", "好航": "导航", "好像": "导航","打开导航": "导航",
+            "导肮": "导航", "好行": "导航", "好航": "导航", "好像": "导航", "打开导航": "导航",
             "炸一": "下一", "一套": "一首",
             "海拳": "打开", "这么": "增大",
         }
@@ -371,11 +371,8 @@ class EnhancedASRRiskModel:
             "雨刷": "雨刮", "吐吐": "车灯", "車燈": "车灯", "車動": "车灯",
             "一套車": "一首歌", "我太燃养": "蓝牙", "我太燃養": "蓝牙",
             "冰冰痛": "车门", "王毕端": "车门", "海拳闷": "车门",
-            "一吋燈": "车灯",
-            "一吋灯": "车灯",
-            "皮疙瘩": "车门",
-            "航道北京": "导航到北京",
-            "航到北京": "导航到北京",
+            "一吋燈": "车灯", "一吋灯": "车灯",
+            "皮疙瘩": "车门", "航道北京": "导航到北京", "航到北京": "导航到北京",
         }
 
         for wrong, correct in noun_corrections.items():
@@ -433,45 +430,24 @@ class EnhancedASRRiskModel:
             print(f"   ✓ 按词匹配: '{found_verb}' + '{found_noun}' -> '{result}'")
             text = result
 
-        # ==================== 6. 拼音纠错（兜底） ====================
+        # ==================== 6. 拼音纠错（按词匹配） ====================
         if self.config.enable_phonetic_correction and self.phonetic_corrector:
-            if text not in self.valid_commands:
-                best_match, sim = self.phonetic_corrector.find_best_match(text, self.valid_commands, threshold=0.5)
-                if best_match:
-                    print(f"   ✓ 拼音纠错: '{text}' -> '{best_match}' (相似度: {sim:.3f})")
-                    text = best_match
-
-        # ==================== 7. 最终强制匹配到有效指令集 ====================
-        if self.config.force_dict_match and text not in self.valid_commands:
-            # 尝试按词组合
-            found_verb = None
-            found_noun = None
-            for v in verbs:
-                if v in text:
-                    found_verb = v
-                    break
-            for n in nouns:
-                if n in text:
-                    found_noun = n
-                    break
-            if found_verb and found_noun:
-                if found_verb in found_noun:
-                    text = found_noun
+            # 按词分割
+            words = re.findall(r'[\u4e00-\u9fa5]+', text)
+            corrected_words = []
+            for word in words:
+                if word in self.valid_commands:
+                    corrected_words.append(word)
                 else:
-                    text = f"{found_verb}{found_noun}"
-                print(f"   ✓ 最终组合: '{found_verb}' + '{found_noun}' -> '{text}'")
+                    best_match, sim = self.phonetic_corrector.find_best_match(word, self.valid_commands, threshold=0.5)
+                    if best_match:
+                        print(f"   ✓ 拼音纠错(词): '{word}' -> '{best_match}' (相似度: {sim:.3f})")
+                        corrected_words.append(best_match)
+                    else:
+                        corrected_words.append(word)
+            text = ''.join(corrected_words)
 
-            # 如果还不在指令集中，用拼音匹配最相似的
-            if text not in self.valid_commands:
-                best_match, sim = self.phonetic_corrector.find_best_match(text, self.valid_commands, threshold=0.3)
-                if best_match:
-                    print(f"   ✓ 最终强制匹配: '{text}' -> '{best_match}' (相似度: {sim:.3f})")
-                    text = best_match
-                else:
-                    # 最后兜底：输出默认指令
-                    print(f"   ⚠️ 无法匹配，使用默认指令")
-                    text = "打开导航"
-
+        # ==================== 7. 最终输出 ====================
         print(f"   📝 结果: '{text}'")
 
         return text
