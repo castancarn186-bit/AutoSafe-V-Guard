@@ -6,6 +6,8 @@
 import numpy as np
 import time
 import re
+import json
+import os
 from typing import Dict, Optional, List, Tuple
 from dataclasses import dataclass
 import librosa
@@ -19,6 +21,7 @@ from audio_preprocessor import AudioPreprocessor
 try:
     from pypinyin import lazy_pinyin, Style
     import Levenshtein
+
     PINYIN_AVAILABLE = True
 except ImportError:
     PINYIN_AVAILABLE = False
@@ -27,18 +30,11 @@ except ImportError:
 # VAD导入
 try:
     import webrtcvad
+
     VAD_AVAILABLE = True
 except ImportError:
     VAD_AVAILABLE = False
     print("⚠️ 请安装 webrtcvad: pip install webrtcvad")
-
-# 数据集加载（可选，需要安装 datasets）
-try:
-    from datasets import load_dataset
-    DATASET_AVAILABLE = True
-except ImportError:
-    DATASET_AVAILABLE = False
-    print("⚠️ 数据集加载未安装，跳过 MAC-SLU 扩充")
 
 
 @dataclass
@@ -58,6 +54,7 @@ class EnhancedConfig:
     defense_strength: str = "medium"
     enable_phonetic_correction: bool = True
     force_dict_match: bool = True
+    commands_json_path: str = "commands.json"  # 指令集JSON文件路径
 
 
 class VADProcessor:
@@ -132,6 +129,121 @@ class PhoneticCorrector:
         return best_match, best_sim
 
 
+class CommandLoader:
+    """指令加载器 - 从JSON文件加载"""
+
+    def __init__(self, json_path: str = "commands.json"):
+        self.json_path = json_path
+        self._commands = []
+        self._commands_by_category = {}
+        self._metadata = {}
+        self._load()
+
+    def _load(self):
+        """加载JSON文件"""
+        if not os.path.exists(self.json_path):
+            print(f"⚠️ 指令文件不存在: {self.json_path}")
+            print(f"   将使用默认指令集")
+            self._load_default_commands()
+            return
+
+        try:
+            with open(self.json_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            self._metadata = data.get("metadata", {})
+
+            # 收集所有指令
+            all_commands = []
+
+            # 加载基础指令
+            base_commands = data.get("base_commands", {})
+            for category, cmd_list in base_commands.items():
+                self._commands_by_category[category] = cmd_list
+                all_commands.extend(cmd_list)
+
+            # 加载MAC-SLU指令
+            mac_slu_commands = data.get("mac_slu_commands", {})
+            for category, cmd_list in mac_slu_commands.items():
+                mac_category = f"mac_slu_{category}"
+                self._commands_by_category[mac_category] = cmd_list
+                all_commands.extend(cmd_list)
+
+            # 去重并排序
+            self._commands = sorted(list(set(all_commands)))
+
+            print(f"✅ 从 {self.json_path} 加载指令集")
+            print(f"   📊 总指令数: {len(self._commands)}")
+            print(f"   📊 基础指令: {self._metadata.get('base_commands_count', 0)} 条")
+            print(f"   📊 扩充指令: {self._metadata.get('mac_slu_commands_count', 0)} 条")
+
+        except Exception as e:
+            print(f"⚠️ 加载指令文件失败: {e}")
+            print(f"   将使用默认指令集")
+            self._load_default_commands()
+
+    def _load_default_commands(self):
+        """加载默认指令集（当JSON文件不存在时）"""
+        default_commands = [
+            # 唤醒与通用
+            "你好小V", "退出", "取消", "返回", "帮助", "确认", "是的", "不是",
+            "今天天气怎么样", "明天天气", "现在几点了", "今天星期几",
+            # 车窗控制
+            "打开车窗", "关闭车窗", "打开天窗", "关闭天窗",
+            "打开左前车窗", "关闭左前车窗", "打开右前车窗", "关闭右前车窗",
+            "打开左后车窗", "关闭左后车窗", "打开右后车窗", "关闭右后车窗",
+            # 车门控制
+            "打开车门", "关闭车门", "打开后备箱", "关闭后备箱", "打开引擎盖", "关闭引擎盖",
+            # 车灯控制
+            "打开车灯", "关闭车灯", "打开近光灯", "关闭近光灯",
+            "打开远光灯", "关闭远光灯", "打开雾灯", "关闭雾灯",
+            # 空调控制
+            "打开空调", "关闭空调", "调高温度", "调低温度",
+            "温度调到20度", "温度调到22度", "温度调到24度",
+            # 多媒体控制
+            "播放音乐", "暂停播放", "上一首", "下一首", "打开收音机", "关闭收音机",
+            # 音量控制
+            "增大音量", "减小音量", "静音", "取消静音",
+            # 导航控制
+            "打开导航", "关闭导航", "导航到家", "导航到公司", "开始导航", "停止导航",
+            # 电话通讯
+            "接听电话", "挂断电话", "拒接电话", "拨打电话",
+            # 驾驶辅助
+            "打开巡航", "关闭巡航", "自动泊车", "退出泊车",
+            # 车辆设置
+            "查看胎压", "查看电量", "查看续航",
+            # 雨刮控制
+            "打开雨刮", "关闭雨刮", "雨刮自动",
+        ]
+        self._commands = sorted(default_commands)
+        print(f"   📊 使用默认指令集: {len(self._commands)} 条")
+
+    def get_all_commands(self) -> List[str]:
+        """获取所有指令"""
+        return self._commands.copy()
+
+    def get_commands_by_category(self, category: str = None) -> Dict[str, List[str]]:
+        """按分类获取指令"""
+        if category:
+            return {category: self._commands_by_category.get(category, [])}
+        return self._commands_by_category.copy()
+
+    def get_metadata(self) -> Dict:
+        """获取元数据"""
+        return self._metadata.copy()
+
+    def search(self, keyword: str) -> List[str]:
+        """搜索指令"""
+        return [cmd for cmd in self._commands if keyword in cmd]
+
+    def reload(self):
+        """重新加载"""
+        self._load()
+
+    def __len__(self):
+        return len(self._commands)
+
+
 class EnhancedASRRiskModel:
     """增强版ASR风险模型 - 按词匹配优先 + 强制指令集匹配"""
 
@@ -170,161 +282,69 @@ class EnhancedASRRiskModel:
             defense_strength=self.config.defense_strength
         )
 
-        # ==================== 有效指令列表（强制匹配目标） ====================
-        self.valid_commands = [
-            # ==================== 唤醒与通用 ====================
-            "你好小V", "退出", "取消", "返回", "帮助", "确认", "是的", "不是",
-            "今天天气怎么样", "明天天气", "现在几点了", "今天星期几",
+        # ==================== 加载指令集 ====================
+        print("\n📚 加载指令集...")
+        self.command_loader = CommandLoader(self.config.commands_json_path)
+        self.valid_commands = self.command_loader.get_all_commands()
 
-            # ==================== 车窗控制 ====================
-            "打开车窗", "关闭车窗", "打开天窗", "关闭天窗",
-            "打开左前车窗", "关闭左前车窗", "打开右前车窗", "关闭右前车窗",
-            "打开左后车窗", "关闭左后车窗", "打开右后车窗", "关闭右后车窗",
-            "车窗留缝",
+        # 按长度排序（优先匹配长指令）
+        self.valid_commands.sort(key=len, reverse=True)
 
-            # ==================== 车门控制 ====================
-            "打开车门", "关闭车门", "打开后备箱", "关闭后备箱", "打开引擎盖", "关闭引擎盖",
-            "打开左前门", "关闭左前门", "打开右前门", "关闭右前门",
-            "打开左后门", "关闭左后门", "打开右后门", "关闭右后门",
-
-            # ==================== 车灯控制 ====================
-            "打开车灯", "关闭车灯", "打开近光灯", "关闭近光灯",
-            "打开远光灯", "关闭远光灯", "打开雾灯", "关闭雾灯",
-            "打开示廓灯", "关闭示廓灯", "打开双闪", "关闭双闪",
-            "打开日间行车灯", "关闭日间行车灯", "打开氛围灯", "关闭氛围灯",
-
-            # ==================== 空调控制 ====================
-            "打开空调", "关闭空调", "调高温度", "调低温度",
-            "温度调到16度", "温度调到18度", "温度调到20度", "温度调到22度",
-            "温度调到24度", "温度调到26度", "温度调到28度",
-            "打开制冷", "关闭制冷", "打开制热", "关闭制热",
-            "打开内循环", "关闭内循环", "打开外循环", "关闭外循环",
-            "打开前除雾", "关闭前除雾", "打开后除雾", "关闭后除雾",
-            "风量大一点", "风量小一点", "打开A/C", "关闭A/C", "自动空调",
-
-            # ==================== 座椅控制 ====================
-            "座椅加热", "关闭座椅加热", "座椅通风", "关闭座椅通风",
-            "座椅按摩", "关闭座椅按摩", "座椅前移", "座椅后移",
-            "座椅靠背放倒", "座椅靠背调直", "记忆座椅1", "记忆座椅2", "记忆座椅3",
-
-            # ==================== 后视镜控制 ====================
-            "折叠后视镜", "展开后视镜", "调节左后视镜", "调节右后视镜",
-
-            # ==================== 多媒体控制 ====================
-            "播放音乐", "暂停播放", "停止播放", "继续播放",
-            "上一首", "上一首歌", "下一首", "下一首歌",
-            "重复播放", "随机播放", "打开歌词", "关闭歌词",
-            "打开收音机", "关闭收音机", "切换电台", "上一个电台", "下一个电台",
-
-            # ==================== 音量控制 ====================
-            "增大音量", "减小音量", "音量加", "音量减", "静音", "取消静音",
-            "音量调到10", "音量调到20", "音量调到30", "音量最大", "音量最小",
-
-            # ==================== 蓝牙控制 ====================
-            "打开蓝牙", "关闭蓝牙", "连接蓝牙", "断开蓝牙",
-
-            # ==================== 导航控制 ====================
-            "打开导航", "关闭导航", "导航到家", "导航到公司",
-            "导航到加油站", "导航到充电站", "导航到停车场", "导航到最近的地铁站",
-            "导航到北京", "导航到上海", "导航到广州", "导航到深圳",
-            "开始导航", "停止导航", "查看全程", "查看路况",
-            "躲避拥堵", "重新规划", "放大地图", "缩小地图", "2D视图", "3D视图",
-            "导航音量调大", "导航音量调小",
-
-            # ==================== 电话通讯 ====================
-            "接听电话", "挂断电话", "拒接电话", "拨打电话", "重拨",
-            "静音通话", "取消静音", "切换听筒", "切换免提",
-
-            # ==================== 驾驶辅助 ====================
-            "打开巡航", "关闭巡航", "巡航加速", "巡航减速",
-            "车道保持开启", "车道保持关闭", "自动泊车", "退出泊车",
-            "打开360影像", "关闭360影像",
-
-            # ==================== 车辆设置 ====================
-            "驾驶模式运动", "驾驶模式经济", "驾驶模式舒适",
-            "能量回收高", "能量回收中", "能量回收低",
-            "打开ESP", "关闭ESP", "打开陡坡缓降", "关闭陡坡缓降",
-            "查看胎压", "查看电量", "查看续航",
-
-            # ==================== 行车记录仪 ====================
-            "打开行车记录仪", "关闭行车记录仪", "拍照", "录像", "紧急录制",
-
-            # ==================== 雨刮控制 ====================
-            "打开雨刮", "关闭雨刮", "雨刮一档", "雨刮二档", "雨刮三档", "雨刮自动",
-        ]
-
-        # ==================== 从 MAC-SLU 数据集扩充 ====================
-        self._expand_from_mac_slu()
+        # 构建动词和名词库（从指令集中提取）
+        self._build_verb_noun_dict()
 
         print(f"✅ 初始化完成，有效指令数: {len(self.valid_commands)}")
 
-    def _expand_from_mac_slu(self, max_samples=3000):
-        """从 MAC-SLU 数据集扩充有效指令集"""
-        if not DATASET_AVAILABLE:
-            print("   ⚠️ datasets 库未安装，跳过 MAC-SLU 扩充")
-            print("   安装命令: pip install datasets")
-            return
+    def _build_verb_noun_dict(self):
+        """从指令集中构建动词和名词库"""
+        # 常见动词
+        common_verbs = [
+            "打开", "关闭", "开启", "关掉", "合上", "收起", "展开", "升起", "降下",
+            "调高", "调低", "增大", "减小", "增加", "减少", "提高", "降低", "调大", "调小",
+            "播放", "暂停", "停止", "继续", "开始",
+            "导航", "查找", "搜索", "规划", "定位",
+            "接听", "挂断", "拒绝", "拨号", "拍照", "录像", "切换", "设置",
+            "上一", "下一",
+        ]
 
-        print("\n📡 从 MAC-SLU 数据集扩充指令集...")
+        # 从指令集中提取名词
+        nouns_set = set()
+        verbs_set = set(common_verbs)
 
-        try:
-            dataset = load_dataset("Gatsby1984/MAC_SLU", split="train")
-            print(f"   加载成功，共 {len(dataset)} 条样本")
+        # 移除动词前缀后的部分作为候选名词
+        for cmd in self.valid_commands:
+            for verb in common_verbs:
+                if cmd.startswith(verb):
+                    noun = cmd[len(verb):]
+                    if len(noun) >= 2:
+                        nouns_set.add(noun)
+                elif verb in cmd:
+                    # 提取包含动词的名词部分
+                    parts = cmd.split(verb)
+                    for part in parts:
+                        if len(part) >= 2:
+                            nouns_set.add(part)
 
-            if max_samples:
-                dataset = dataset.select(range(min(max_samples, len(dataset))))
+        # 添加常见名词
+        common_nouns = [
+            "车窗", "左前车窗", "右前车窗", "左后车窗", "右后车窗", "天窗",
+            "车门", "左前门", "右前门", "左后门", "右后门", "后备箱", "引擎盖",
+            "车灯", "近光灯", "远光灯", "雾灯", "示廓灯", "双闪", "日间行车灯", "氛围灯",
+            "空调", "温度", "制冷", "制热", "内循环", "外循环", "前除雾", "后除雾", "风量", "AC",
+            "座椅", "座椅加热", "座椅通风", "座椅按摩",
+            "音乐", "收音机", "电台", "蓝牙", "歌词", "音量",
+            "导航", "地图", "路线", "路况", "目的地",
+            "电话", "通讯录", "联系人",
+            "雨刮", "行车记录仪", "胎压", "电量", "续航",
+            "一首歌", "医院", "加油站", "充电站", "停车场"
+        ]
 
-            # 车载意图关键词
-            car_keywords = [
-                "navigation", "poi", "route", "traffic", "map",
-                "audio", "music", "radio", "volume",
-                "air_conditioner", "temperature", "ac", "climate",
-                "window", "door", "trunk", "light", "seat",
-                "call", "message", "phone",
-                "vehicle", "setting", "battery", "tire",
-            ]
+        nouns_set.update(common_nouns)
 
-            new_commands = []
-
-            for item in dataset:
-                text = item.get("text", "")
-                intent = item.get("intent", "")
-
-                if not text:
-                    continue
-
-                # 清洗
-                text = re.sub(r'[，,。！？；：""''《》【】（）]', '', text)
-                text = re.sub(r'\s+', '', text)
-
-                if len(text) < 2 or len(text) > 25:
-                    continue
-
-                # 过滤车载相关
-                is_car = False
-                for kw in car_keywords:
-                    if kw in intent.lower():
-                        is_car = True
-                        break
-
-                if not is_car:
-                    continue
-
-                if text not in self.valid_commands and text not in new_commands:
-                    new_commands.append(text)
-
-            # 合并到 valid_commands
-            old_count = len(self.valid_commands)
-            self.valid_commands.extend(new_commands)
-            self.valid_commands = list(set(self.valid_commands))
-            new_count = len(self.valid_commands)
-
-            print(f"   ✅ 从数据集新增 {len(new_commands)} 条指令")
-            print(f"   📊 有效指令总数: {old_count} → {new_count} (+{new_count - old_count})")
-
-        except Exception as e:
-            print(f"   ⚠️ MAC-SLU 加载失败: {e}")
-            print("   可手动安装 datasets 后重试，或跳过")
+        self.verbs = list(verbs_set)
+        self.nouns = list(nouns_set)
+        self.verbs.sort(key=len, reverse=True)
+        self.nouns.sort(key=len, reverse=True)
 
     def compute_risk(self, audio: np.ndarray, sample_rate: int = 16000) -> Dict:
         timings = {}
@@ -401,7 +421,7 @@ class EnhancedASRRiskModel:
         }
 
     def _postprocess(self, text: str) -> str:
-        """后处理纠错 - 按词匹配优先 + 强制指令集匹配"""
+        """后处理纠错 - 按词匹配 + 整条指令拼音纠错"""
 
         print(f"\n🔧 [后处理-防御] 原始: '{text}'")
 
@@ -423,7 +443,7 @@ class EnhancedASRRiskModel:
             "灯大": "增大", "障大": "增大", "真大": "增大",
             "我放": "播放", "哇放": "播放", "拨放": "播放",
             "但停": "暂停", "按停": "暂停",
-            "导肮": "导航", "好行": "导航", "好航": "导航", "好像": "导航","打开导航": "导航",
+            "导肮": "导航", "好行": "导航", "好航": "导航", "好像": "导航",
             "炸一": "下一", "一套": "一首",
             "海拳": "打开", "这么": "增大",
         }
@@ -457,46 +477,23 @@ class EnhancedASRRiskModel:
                 text = text.replace(wrong, correct)
                 print(f"   ✓ 名词纠错: '{wrong}' -> '{correct}'")
 
-        # ==================== 5. 按词匹配 ====================
-        verbs = [
-            "打开", "关闭", "开启", "关掉", "合上", "收起", "展开", "升起", "降下",
-            "调高", "调低", "增大", "减小", "增加", "减少", "提高", "降低", "调大", "调小",
-            "播放", "暂停", "停止", "继续", "开始",
-            "导航", "查找", "搜索", "规划", "定位",
-            "接听", "挂断", "拒绝", "拨号", "拍照", "录像", "切换", "设置",
-            "上一", "下一",
-        ]
-
-        nouns = [
-            "车窗", "左前车窗", "右前车窗", "左后车窗", "右后车窗", "天窗",
-            "车门", "左前门", "右前门", "左后门", "右后门", "后备箱", "引擎盖",
-            "车灯", "近光灯", "远光灯", "雾灯", "示廓灯", "双闪", "日间行车灯", "氛围灯",
-            "空调", "温度", "制冷", "制热", "内循环", "外循环", "前除雾", "后除雾", "风量", "AC",
-            "座椅", "座椅加热", "座椅通风", "座椅按摩", "座椅位置",
-            "音乐", "收音机", "电台", "蓝牙", "歌词", "列表", "收藏", "音量",
-            "导航", "地图", "路线", "路况", "目的地",
-            "电话", "通讯录", "联系人",
-            "雨刮", "行车记录仪", "充电口", "油箱盖", "胎压", "电量", "续航",
-            "一首歌",
-        ]
-
-        # 去重并按长度排序
-        verbs = list(set(verbs))
-        nouns = list(set(nouns))
-        verbs.sort(key=len, reverse=True)
-        nouns.sort(key=len, reverse=True)
+        # ==================== 5. 按词匹配（动词+名词组合） ====================
+        # 记录已经匹配成功的词组，拼音纠错时跳过它们
+        matched_parts = []
 
         found_verb = None
         found_noun = None
 
-        for v in verbs:
+        for v in self.verbs:
             if v in text:
                 found_verb = v
+                matched_parts.append(v)
                 break
 
-        for n in nouns:
+        for n in self.nouns:
             if n in text:
                 found_noun = n
+                matched_parts.append(n)
                 break
 
         if found_verb and found_noun:
@@ -507,25 +504,100 @@ class EnhancedASRRiskModel:
             print(f"   ✓ 按词匹配: '{found_verb}' + '{found_noun}' -> '{result}'")
             text = result
 
-        # ==================== 6. 拼音纠错（按词匹配） ====================
+        # ==================== 6. 整条指令拼音纠错（跳过已匹配部分） ====================
         if self.config.enable_phonetic_correction and self.phonetic_corrector:
-            words = re.findall(r'[\u4e00-\u9fa5]+', text)
-            corrected_words = []
-            for word in words:
-                if word in self.valid_commands:
-                    corrected_words.append(word)
-                else:
-                    best_match, sim = self.phonetic_corrector.find_best_match(word, self.valid_commands, threshold=0.5)
-                    if best_match:
-                        print(f"   ✓ 拼音纠错(词): '{word}' -> '{best_match}' (相似度: {sim:.3f})")
-                        corrected_words.append(best_match)
-                    else:
-                        corrected_words.append(word)
-            text = ''.join(corrected_words)
+            # 获取完整的指令列表
+            all_commands = list(set(self.verbs + self.nouns + self.valid_commands))
+            all_commands.sort(key=len, reverse=True)
 
-        print(f"   📝 结果: '{text}'")
+            # 检查是否已经匹配到完整指令
+            matched_full_command = False
+
+            # 先尝试精确匹配完整指令
+            if text in self.valid_commands:
+                matched_full_command = True
+                print(f"   ✓ 已是完整指令: '{text}'")
+            else:
+                # 尝试最相似的整体匹配
+                best_match, similarity = self.phonetic_corrector.find_best_match(
+                    text, all_commands, threshold=0.5
+                )
+
+                if best_match and similarity >= 0.6:
+                    print(f"   ✓ 整条指令拼音匹配: '{text}' -> '{best_match}' (相似度: {similarity:.3f})")
+                    text = best_match
+                    matched_full_command = True
+                elif best_match and 0.5 <= similarity < 0.6:
+                    print(f"   ⚠️ 整条指令拼音相似度过低: '{text}' -> '{best_match}' (相似度: {similarity:.3f})")
+                    print(f"   → 保持原样: '{text}'")
+                else:
+                    print(f"   ✗ 未找到匹配的指令，保持原样: '{text}'")
+
+            # 如果整条指令没有匹配成功，尝试对未匹配的部分进行拼音纠错
+            if not matched_full_command:
+                # 提取未匹配的词组
+                words = re.findall(r'[\u4e00-\u9fa5]+', text)
+                corrected_words = []
+
+                for word in words:
+                    # 检查这个词是否已经被匹配过
+                    if word in matched_parts:
+                        print(f"   ⏭️ 跳过已匹配词: '{word}'")
+                        corrected_words.append(word)
+                        continue
+
+                    # 检查是否已经是正确的动词或名词
+                    if word in self.verbs or word in self.nouns or word in self.valid_commands:
+                        print(f"   ✓ 已是正确词: '{word}'")
+                        corrected_words.append(word)
+                        matched_parts.append(word)
+                        continue
+
+                    # 在动词库中找最相似的
+                    best_match, sim = self.phonetic_corrector.find_best_match(word, self.verbs, threshold=0.5)
+                    if best_match and sim >= 0.6:
+                        print(f"   ✓ 拼音纠错(动词): '{word}' -> '{best_match}' (相似度: {sim:.3f})")
+                        corrected_words.append(best_match)
+                        continue
+
+                    # 在名词库中找最相似的
+                    best_match, sim = self.phonetic_corrector.find_best_match(word, self.nouns, threshold=0.5)
+                    if best_match and sim >= 0.6:
+                        print(f"   ✓ 拼音纠错(名词): '{word}' -> '{best_match}' (相似度: {sim:.3f})")
+                        corrected_words.append(best_match)
+                        continue
+
+                    # 在完整指令库中找最相似的
+                    best_match, sim = self.phonetic_corrector.find_best_match(word, self.valid_commands, threshold=0.5)
+                    if best_match and sim >= 0.6:
+                        print(f"   ✓ 拼音纠错(指令): '{word}' -> '{best_match}' (相似度: {sim:.3f})")
+                        corrected_words.append(best_match)
+                        continue
+
+                    # 相似度过低或未找到，保持原样
+                    if best_match and sim < 0.6:
+                        print(f"   ⚠️ 拼音相似度过低: '{word}' -> '{best_match}' (相似度: {sim:.3f})，保持原样")
+                    else:
+                        print(f"   ✗ 未找到匹配: '{word}'，保持原样")
+                    corrected_words.append(word)
+
+                text = ''.join(corrected_words)
+
+        # ==================== 7. 最终清理 ====================
+        text = re.sub(r'[，,。！？；：""''《》【】（）]', '', text)
+
+        print(f"   📝 最终结果: '{text}'")
 
         return text
+
+    def reload_commands(self):
+        """热重载指令集"""
+        print("\n🔄 热重载指令集...")
+        self.command_loader.reload()
+        self.valid_commands = self.command_loader.get_all_commands()
+        self.valid_commands.sort(key=len, reverse=True)
+        self._build_verb_noun_dict()
+        print(f"✅ 重载完成，当前指令数: {len(self.valid_commands)}")
 
     def cleanup(self):
         self.engine.cleanup()
@@ -545,7 +617,8 @@ def test_model():
         defense_strength="medium",
         enable_postprocessing=True,
         enable_phonetic_correction=True,
-        force_dict_match=True
+        force_dict_match=True,
+        commands_json_path="commands.json"  # 指定JSON文件路径
     )
 
     model = EnhancedASRRiskModel(config)
