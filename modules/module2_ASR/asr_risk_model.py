@@ -54,7 +54,7 @@ class EnhancedConfig:
     defense_strength: str = "medium"
     enable_phonetic_correction: bool = True
     force_dict_match: bool = True
-    commands_json_path: str = "commands.json"  # 指令集JSON文件路径
+    commands_json_path: str = "commands.json"
 
 
 class VADProcessor:
@@ -135,8 +135,6 @@ class CommandLoader:
     def __init__(self, json_path: str = "commands.json"):
         self.json_path = json_path
         self._commands = []
-        self._commands_by_category = {}
-        self._metadata = {}
         self._load()
 
     def _load(self):
@@ -151,93 +149,35 @@ class CommandLoader:
             with open(self.json_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
 
-            self._metadata = data.get("metadata", {})
-
-            # 收集所有指令
             all_commands = []
-
-            # 加载基础指令
             base_commands = data.get("base_commands", {})
             for category, cmd_list in base_commands.items():
-                self._commands_by_category[category] = cmd_list
                 all_commands.extend(cmd_list)
 
-            # 加载MAC-SLU指令
-            mac_slu_commands = data.get("mac_slu_commands", {})
-            for category, cmd_list in mac_slu_commands.items():
-                mac_category = f"mac_slu_{category}"
-                self._commands_by_category[mac_category] = cmd_list
-                all_commands.extend(cmd_list)
-
-            # 去重并排序
             self._commands = sorted(list(set(all_commands)))
-
             print(f"✅ 从 {self.json_path} 加载指令集")
             print(f"   📊 总指令数: {len(self._commands)}")
-            print(f"   📊 基础指令: {self._metadata.get('base_commands_count', 0)} 条")
-            print(f"   📊 扩充指令: {self._metadata.get('mac_slu_commands_count', 0)} 条")
 
         except Exception as e:
             print(f"⚠️ 加载指令文件失败: {e}")
-            print(f"   将使用默认指令集")
             self._load_default_commands()
 
     def _load_default_commands(self):
-        """加载默认指令集（当JSON文件不存在时）"""
+        """加载默认指令集"""
         default_commands = [
-            # 唤醒与通用
             "你好小V", "退出", "取消", "返回", "帮助", "确认", "是的", "不是",
-            "今天天气怎么样", "明天天气", "现在几点了", "今天星期几",
-            # 车窗控制
-            "打开车窗", "关闭车窗", "打开天窗", "关闭天窗",
-            "打开左前车窗", "关闭左前车窗", "打开右前车窗", "关闭右前车窗",
-            "打开左后车窗", "关闭左后车窗", "打开右后车窗", "关闭右后车窗",
-            # 车门控制
-            "打开车门", "关闭车门", "打开后备箱", "关闭后备箱", "打开引擎盖", "关闭引擎盖",
-            # 车灯控制
-            "打开车灯", "关闭车灯", "打开近光灯", "关闭近光灯",
-            "打开远光灯", "关闭远光灯", "打开雾灯", "关闭雾灯",
-            # 空调控制
-            "打开空调", "关闭空调", "调高温度", "调低温度",
-            "温度调到20度", "温度调到22度", "温度调到24度",
-            # 多媒体控制
-            "播放音乐", "暂停播放", "上一首", "下一首", "打开收音机", "关闭收音机",
-            # 音量控制
-            "增大音量", "减小音量", "静音", "取消静音",
-            # 导航控制
-            "打开导航", "关闭导航", "导航到家", "导航到公司", "开始导航", "停止导航",
-            # 电话通讯
-            "接听电话", "挂断电话", "拒接电话", "拨打电话",
-            # 驾驶辅助
-            "打开巡航", "关闭巡航", "自动泊车", "退出泊车",
-            # 车辆设置
-            "查看胎压", "查看电量", "查看续航",
-            # 雨刮控制
-            "打开雨刮", "关闭雨刮", "雨刮自动",
+            "打开车窗", "关闭车窗", "打开天窗", "关闭天窗", "打开车门", "关闭车门",
+            "打开空调", "关闭空调", "调高温度", "调低温度", "播放音乐", "暂停播放",
+            "上一首", "下一首", "增大音量", "减小音量", "静音", "取消静音",
+            "打开导航", "关闭导航", "接听电话", "挂断电话"
         ]
         self._commands = sorted(default_commands)
         print(f"   📊 使用默认指令集: {len(self._commands)} 条")
 
     def get_all_commands(self) -> List[str]:
-        """获取所有指令"""
         return self._commands.copy()
 
-    def get_commands_by_category(self, category: str = None) -> Dict[str, List[str]]:
-        """按分类获取指令"""
-        if category:
-            return {category: self._commands_by_category.get(category, [])}
-        return self._commands_by_category.copy()
-
-    def get_metadata(self) -> Dict:
-        """获取元数据"""
-        return self._metadata.copy()
-
-    def search(self, keyword: str) -> List[str]:
-        """搜索指令"""
-        return [cmd for cmd in self._commands if keyword in cmd]
-
     def reload(self):
-        """重新加载"""
         self._load()
 
     def __len__(self):
@@ -257,7 +197,7 @@ class EnhancedASRRiskModel:
         print(f"VAD: {'启用' if self.config.enable_vad else '禁用'}")
         print(f"对抗性防御: {'启用' if self.config.enable_adversarial_defense else '禁用'}")
         print(f"防御强度: {self.config.defense_strength}")
-        print(f"后处理纠错: {'启用(仅防御)' if self.config.enable_postprocessing else '禁用'}")
+        print(f"后处理纠错: {'启用' if self.config.enable_postprocessing else '禁用'}")
         print(f"拼音纠错: {'启用' if self.config.enable_phonetic_correction and PINYIN_AVAILABLE else '禁用'}")
         print(f"强制字典匹配: {'启用' if self.config.force_dict_match else '禁用'}")
 
@@ -286,76 +226,18 @@ class EnhancedASRRiskModel:
         print("\n📚 加载指令集...")
         self.command_loader = CommandLoader(self.config.commands_json_path)
         self.valid_commands = self.command_loader.get_all_commands()
-
-        # 按长度排序（优先匹配长指令）
         self.valid_commands.sort(key=len, reverse=True)
 
-        # 构建动词和名词库（从指令集中提取）
-        self._build_verb_noun_dict()
-
         print(f"✅ 初始化完成，有效指令数: {len(self.valid_commands)}")
-
-    def _build_verb_noun_dict(self):
-        """从指令集中构建动词和名词库"""
-        # 常见动词
-        common_verbs = [
-            "打开", "关闭", "开启", "关掉", "合上", "收起", "展开", "升起", "降下",
-            "调高", "调低", "增大", "减小", "增加", "减少", "提高", "降低", "调大", "调小",
-            "播放", "暂停", "停止", "继续", "开始",
-            "导航", "查找", "搜索", "规划", "定位",
-            "接听", "挂断", "拒绝", "拨号", "拍照", "录像", "切换", "设置",
-            "上一", "下一",
-        ]
-
-        # 从指令集中提取名词
-        nouns_set = set()
-        verbs_set = set(common_verbs)
-
-        # 移除动词前缀后的部分作为候选名词
-        for cmd in self.valid_commands:
-            for verb in common_verbs:
-                if cmd.startswith(verb):
-                    noun = cmd[len(verb):]
-                    if len(noun) >= 2:
-                        nouns_set.add(noun)
-                elif verb in cmd:
-                    # 提取包含动词的名词部分
-                    parts = cmd.split(verb)
-                    for part in parts:
-                        if len(part) >= 2:
-                            nouns_set.add(part)
-
-        # 添加常见名词
-        common_nouns = [
-            "车窗", "左前车窗", "右前车窗", "左后车窗", "右后车窗", "天窗",
-            "车门", "左前门", "右前门", "左后门", "右后门", "后备箱", "引擎盖",
-            "车灯", "近光灯", "远光灯", "雾灯", "示廓灯", "双闪", "日间行车灯", "氛围灯",
-            "空调", "温度", "制冷", "制热", "内循环", "外循环", "前除雾", "后除雾", "风量", "AC",
-            "座椅", "座椅加热", "座椅通风", "座椅按摩",
-            "音乐", "收音机", "电台", "蓝牙", "歌词", "音量",
-            "导航", "地图", "路线", "路况", "目的地",
-            "电话", "通讯录", "联系人",
-            "雨刮", "行车记录仪", "胎压", "电量", "续航",
-            "一首歌", "医院", "加油站", "充电站", "停车场"
-        ]
-
-        nouns_set.update(common_nouns)
-
-        self.verbs = list(verbs_set)
-        self.nouns = list(nouns_set)
-        self.verbs.sort(key=len, reverse=True)
-        self.nouns.sort(key=len, reverse=True)
 
     def compute_risk(self, audio: np.ndarray, sample_rate: int = 16000) -> Dict:
         timings = {}
 
-        # 1. 预处理
         pre_start = time.time()
         if sample_rate != 16000:
             audio = librosa.resample(audio, orig_sr=sample_rate, target_sr=16000)
         timings['preprocess_ms'] = (time.time() - pre_start) * 1000
 
-        # 2. VAD处理
         if self.vad:
             vad_start = time.time()
             audio = self.vad.process(audio)
@@ -363,7 +245,6 @@ class EnhancedASRRiskModel:
         else:
             timings['vad_ms'] = 0
 
-        # 3. 防御处理
         if self.config.enable_adversarial_defense:
             defense_start = time.time()
             audio = self.audio_preprocessor.prepare_for_asr(audio, sample_rate=16000, apply_defense=True)
@@ -371,7 +252,6 @@ class EnhancedASRRiskModel:
         else:
             timings['defense_ms'] = 0
 
-        # 4. ASR转录
         asr_start = time.time()
         asr_result = self.engine.transcribe(audio, sample_rate=16000)
         timings['asr_ms'] = (time.time() - asr_start) * 1000
@@ -383,18 +263,14 @@ class EnhancedASRRiskModel:
                 'timings': timings
             }
 
-        # 5. 后处理纠错
         post_start = time.time()
-        if self.config.enable_adversarial_defense and self.config.enable_postprocessing:
+        if self.config.enable_postprocessing:
             corrected_text = self._postprocess(asr_result.text)
         else:
             corrected_text = asr_result.text
         timings['post_ms'] = (time.time() - post_start) * 1000
 
-        # 6. 置信度
         confidence = self.confidence_analyzer.analyze(asr_result)
-
-        # 7. 风险计算
         risk = 1.0 - confidence.confidence_score
         risk = max(0.0, min(1.0, risk))
 
@@ -478,19 +354,46 @@ class EnhancedASRRiskModel:
                 print(f"   ✓ 名词纠错: '{wrong}' -> '{correct}'")
 
         # ==================== 5. 按词匹配（动词+名词组合） ====================
+        verbs = [
+            "打开", "关闭", "开启", "关掉", "合上", "收起", "展开", "升起", "降下",
+            "调高", "调低", "增大", "减小", "增加", "减少", "提高", "降低", "调大", "调小",
+            "播放", "暂停", "停止", "继续", "开始",
+            "导航", "查找", "搜索", "规划", "定位",
+            "接听", "挂断", "拒绝", "拨号", "拍照", "录像", "切换", "设置",
+            "上一", "下一",
+        ]
+
+        nouns = [
+            "车窗", "左前车窗", "右前车窗", "左后车窗", "右后车窗", "天窗",
+            "车门", "左前门", "右前门", "左后门", "右后门", "后备箱", "引擎盖",
+            "车灯", "近光灯", "远光灯", "雾灯", "示廓灯", "双闪", "日间行车灯", "氛围灯",
+            "空调", "温度", "制冷", "制热", "内循环", "外循环", "前除雾", "后除雾", "风量", "AC",
+            "座椅", "座椅加热", "座椅通风", "座椅按摩", "座椅位置",
+            "音乐", "收音机", "电台", "蓝牙", "歌词", "列表", "收藏", "音量",
+            "导航", "地图", "路线", "路况", "目的地",
+            "电话", "通讯录", "联系人",
+            "雨刮", "行车记录仪", "充电口", "油箱盖", "胎压", "电量", "续航",
+            "一首歌",
+        ]
+
+        verbs = list(set(verbs))
+        nouns = list(set(nouns))
+        verbs.sort(key=len, reverse=True)
+        nouns.sort(key=len, reverse=True)
+
         # 记录已经匹配成功的词组，拼音纠错时跳过它们
         matched_parts = []
 
         found_verb = None
         found_noun = None
 
-        for v in self.verbs:
+        for v in verbs:
             if v in text:
                 found_verb = v
                 matched_parts.append(v)
                 break
 
-        for n in self.nouns:
+        for n in nouns:
             if n in text:
                 found_noun = n
                 matched_parts.append(n)
@@ -506,8 +409,8 @@ class EnhancedASRRiskModel:
 
         # ==================== 6. 整条指令拼音纠错（跳过已匹配部分） ====================
         if self.config.enable_phonetic_correction and self.phonetic_corrector:
-            # 获取完整的指令列表
-            all_commands = list(set(self.verbs + self.nouns + self.valid_commands))
+            # 获取完整的指令列表（动词+名词组合和完整指令）
+            all_commands = list(set(verbs + nouns + self.valid_commands))
             all_commands.sort(key=len, reverse=True)
 
             # 检查是否已经匹配到完整指令
@@ -547,21 +450,21 @@ class EnhancedASRRiskModel:
                         continue
 
                     # 检查是否已经是正确的动词或名词
-                    if word in self.verbs or word in self.nouns or word in self.valid_commands:
+                    if word in verbs or word in nouns or word in self.valid_commands:
                         print(f"   ✓ 已是正确词: '{word}'")
                         corrected_words.append(word)
                         matched_parts.append(word)
                         continue
 
                     # 在动词库中找最相似的
-                    best_match, sim = self.phonetic_corrector.find_best_match(word, self.verbs, threshold=0.5)
+                    best_match, sim = self.phonetic_corrector.find_best_match(word, verbs, threshold=0.5)
                     if best_match and sim >= 0.6:
                         print(f"   ✓ 拼音纠错(动词): '{word}' -> '{best_match}' (相似度: {sim:.3f})")
                         corrected_words.append(best_match)
                         continue
 
                     # 在名词库中找最相似的
-                    best_match, sim = self.phonetic_corrector.find_best_match(word, self.nouns, threshold=0.5)
+                    best_match, sim = self.phonetic_corrector.find_best_match(word, nouns, threshold=0.5)
                     if best_match and sim >= 0.6:
                         print(f"   ✓ 拼音纠错(名词): '{word}' -> '{best_match}' (相似度: {sim:.3f})")
                         corrected_words.append(best_match)
@@ -590,15 +493,6 @@ class EnhancedASRRiskModel:
 
         return text
 
-    def reload_commands(self):
-        """热重载指令集"""
-        print("\n🔄 热重载指令集...")
-        self.command_loader.reload()
-        self.valid_commands = self.command_loader.get_all_commands()
-        self.valid_commands.sort(key=len, reverse=True)
-        self._build_verb_noun_dict()
-        print(f"✅ 重载完成，当前指令数: {len(self.valid_commands)}")
-
     def cleanup(self):
         self.engine.cleanup()
 
@@ -618,7 +512,7 @@ def test_model():
         enable_postprocessing=True,
         enable_phonetic_correction=True,
         force_dict_match=True,
-        commands_json_path="commands.json"  # 指定JSON文件路径
+        commands_json_path="commands.json"
     )
 
     model = EnhancedASRRiskModel(config)
