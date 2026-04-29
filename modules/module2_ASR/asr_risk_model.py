@@ -19,7 +19,6 @@ from audio_preprocessor import AudioPreprocessor
 try:
     from pypinyin import lazy_pinyin, Style
     import Levenshtein
-
     PINYIN_AVAILABLE = True
 except ImportError:
     PINYIN_AVAILABLE = False
@@ -28,11 +27,18 @@ except ImportError:
 # VAD导入
 try:
     import webrtcvad
-
     VAD_AVAILABLE = True
 except ImportError:
     VAD_AVAILABLE = False
     print("⚠️ 请安装 webrtcvad: pip install webrtcvad")
+
+# 数据集加载（可选，需要安装 datasets）
+try:
+    from datasets import load_dataset
+    DATASET_AVAILABLE = True
+except ImportError:
+    DATASET_AVAILABLE = False
+    print("⚠️ 数据集加载未安装，跳过 MAC-SLU 扩充")
 
 
 @dataclass
@@ -164,7 +170,7 @@ class EnhancedASRRiskModel:
             defense_strength=self.config.defense_strength
         )
 
-        # 有效指令列表（强制匹配目标）
+        # ==================== 有效指令列表（强制匹配目标） ====================
         self.valid_commands = [
             # ==================== 唤醒与通用 ====================
             "你好小V", "退出", "取消", "返回", "帮助", "确认", "是的", "不是",
@@ -247,7 +253,78 @@ class EnhancedASRRiskModel:
             "打开雨刮", "关闭雨刮", "雨刮一档", "雨刮二档", "雨刮三档", "雨刮自动",
         ]
 
-        print("✅ 初始化完成")
+        # ==================== 从 MAC-SLU 数据集扩充 ====================
+        self._expand_from_mac_slu()
+
+        print(f"✅ 初始化完成，有效指令数: {len(self.valid_commands)}")
+
+    def _expand_from_mac_slu(self, max_samples=3000):
+        """从 MAC-SLU 数据集扩充有效指令集"""
+        if not DATASET_AVAILABLE:
+            print("   ⚠️ datasets 库未安装，跳过 MAC-SLU 扩充")
+            print("   安装命令: pip install datasets")
+            return
+
+        print("\n📡 从 MAC-SLU 数据集扩充指令集...")
+
+        try:
+            dataset = load_dataset("Gatsby1984/MAC_SLU", split="train")
+            print(f"   加载成功，共 {len(dataset)} 条样本")
+
+            if max_samples:
+                dataset = dataset.select(range(min(max_samples, len(dataset))))
+
+            # 车载意图关键词
+            car_keywords = [
+                "navigation", "poi", "route", "traffic", "map",
+                "audio", "music", "radio", "volume",
+                "air_conditioner", "temperature", "ac", "climate",
+                "window", "door", "trunk", "light", "seat",
+                "call", "message", "phone",
+                "vehicle", "setting", "battery", "tire",
+            ]
+
+            new_commands = []
+
+            for item in dataset:
+                text = item.get("text", "")
+                intent = item.get("intent", "")
+
+                if not text:
+                    continue
+
+                # 清洗
+                text = re.sub(r'[，,。！？；：""''《》【】（）]', '', text)
+                text = re.sub(r'\s+', '', text)
+
+                if len(text) < 2 or len(text) > 25:
+                    continue
+
+                # 过滤车载相关
+                is_car = False
+                for kw in car_keywords:
+                    if kw in intent.lower():
+                        is_car = True
+                        break
+
+                if not is_car:
+                    continue
+
+                if text not in self.valid_commands and text not in new_commands:
+                    new_commands.append(text)
+
+            # 合并到 valid_commands
+            old_count = len(self.valid_commands)
+            self.valid_commands.extend(new_commands)
+            self.valid_commands = list(set(self.valid_commands))
+            new_count = len(self.valid_commands)
+
+            print(f"   ✅ 从数据集新增 {len(new_commands)} 条指令")
+            print(f"   📊 有效指令总数: {old_count} → {new_count} (+{new_count - old_count})")
+
+        except Exception as e:
+            print(f"   ⚠️ MAC-SLU 加载失败: {e}")
+            print("   可手动安装 datasets 后重试，或跳过")
 
     def compute_risk(self, audio: np.ndarray, sample_rate: int = 16000) -> Dict:
         timings = {}
@@ -324,7 +401,7 @@ class EnhancedASRRiskModel:
         }
 
     def _postprocess(self, text: str) -> str:
-        """后处理纠错 - 按词匹配 + 按词拼音纠错"""
+        """后处理纠错 - 按词匹配优先 + 强制指令集匹配"""
 
         print(f"\n🔧 [后处理-防御] 原始: '{text}'")
 
@@ -346,7 +423,7 @@ class EnhancedASRRiskModel:
             "灯大": "增大", "障大": "增大", "真大": "增大",
             "我放": "播放", "哇放": "播放", "拨放": "播放",
             "但停": "暂停", "按停": "暂停",
-            "导肮": "导航", "好行": "导航", "好航": "导航", "好像": "导航", "打开导航": "导航",
+            "导肮": "导航", "好行": "导航", "好航": "导航", "好像": "导航","打开导航": "导航",
             "炸一": "下一", "一套": "一首",
             "海拳": "打开", "这么": "增大",
         }
@@ -432,7 +509,6 @@ class EnhancedASRRiskModel:
 
         # ==================== 6. 拼音纠错（按词匹配） ====================
         if self.config.enable_phonetic_correction and self.phonetic_corrector:
-            # 按词分割
             words = re.findall(r'[\u4e00-\u9fa5]+', text)
             corrected_words = []
             for word in words:
@@ -447,7 +523,6 @@ class EnhancedASRRiskModel:
                         corrected_words.append(word)
             text = ''.join(corrected_words)
 
-        # ==================== 7. 最终输出 ====================
         print(f"   📝 结果: '{text}'")
 
         return text
