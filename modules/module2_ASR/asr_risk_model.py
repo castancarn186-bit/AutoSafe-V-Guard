@@ -1,6 +1,7 @@
 # asr_risk_model.py
 """
 增强版ASR风险模型 - 按词匹配优先版 + 强制指令集匹配
+支持动态纠错规则（运行时学习）
 """
 
 import numpy as np
@@ -190,6 +191,10 @@ class EnhancedASRRiskModel:
     def __init__(self, config: Optional[EnhancedConfig] = None):
         self.config = config or EnhancedConfig()
 
+        # ==================== 新增：动态纠错规则（运行时学习） ====================
+        self.dynamic_corrections: Dict[str, str] = {}
+        self.dynamic_corrections_file = "asr_dynamic_corrections.json"
+
         print("\n" + "=" * 70)
         print("🚀 增强版ASR风险模型")
         print("=" * 70)
@@ -200,6 +205,7 @@ class EnhancedASRRiskModel:
         print(f"后处理纠错: {'启用' if self.config.enable_postprocessing else '禁用'}")
         print(f"拼音纠错: {'启用' if self.config.enable_phonetic_correction and PINYIN_AVAILABLE else '禁用'}")
         print(f"强制字典匹配: {'启用' if self.config.force_dict_match else '禁用'}")
+        print(f"动态纠错: {'启用' if self.config.enable_postprocessing else '禁用'}")
 
         self.vad = None
         if self.config.enable_vad and VAD_AVAILABLE:
@@ -228,7 +234,84 @@ class EnhancedASRRiskModel:
         self.valid_commands = self.command_loader.get_all_commands()
         self.valid_commands.sort(key=len, reverse=True)
 
+        # ==================== 加载动态纠错规则 ====================
+        self._load_dynamic_corrections()
+
         print(f"✅ 初始化完成，有效指令数: {len(self.valid_commands)}")
+        print(f"   📚 动态纠错规则: {len(self.dynamic_corrections)} 条")
+
+    # ==================== 新增：动态纠错规则管理 ====================
+
+    def _load_dynamic_corrections(self):
+        """加载之前学习的动态纠错规则"""
+        if os.path.exists(self.dynamic_corrections_file):
+            try:
+                with open(self.dynamic_corrections_file, 'r', encoding='utf-8') as f:
+                    self.dynamic_corrections = json.load(f)
+                print(f"✅ 加载动态纠错规则: {len(self.dynamic_corrections)} 条")
+            except Exception as e:
+                print(f"⚠️ 加载动态纠错规则失败: {e}")
+
+    def _save_dynamic_corrections(self):
+        """保存动态纠错规则"""
+        try:
+            with open(self.dynamic_corrections_file, 'w', encoding='utf-8') as f:
+                json.dump(self.dynamic_corrections, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"⚠️ 保存动态纠错规则失败: {e}")
+
+    def add_correction(self, wrong: str, correct: str) -> bool:
+        """
+        动态添加纠错规则（运行时学习）
+
+        Args:
+            wrong: 错误的识别结果
+            correct: 正确的文本
+
+        Returns:
+            是否成功添加
+        """
+        if not wrong or not correct or wrong == correct:
+            return False
+
+        # 避免添加重复规则
+        if wrong in self.dynamic_corrections:
+            if self.dynamic_corrections[wrong] == correct:
+                return False
+            else:
+                print(f"   🔄 更新纠错规则: '{wrong}' -> '{correct}' (原: '{self.dynamic_corrections[wrong]}')")
+
+        self.dynamic_corrections[wrong] = correct
+        self._save_dynamic_corrections()
+        print(f"   📚 动态添加纠错: '{wrong}' -> '{correct}'")
+        return True
+
+    def add_corrections_batch(self, corrections: Dict[str, str]) -> int:
+        """批量添加纠错规则"""
+        added = 0
+        for wrong, correct in corrections.items():
+            if self.add_correction(wrong, correct):
+                added += 1
+        return added
+
+    def get_dynamic_corrections(self) -> Dict[str, str]:
+        """获取所有动态纠错规则"""
+        return self.dynamic_corrections.copy()
+
+    def remove_correction(self, wrong: str) -> bool:
+        """移除纠错规则"""
+        if wrong in self.dynamic_corrections:
+            del self.dynamic_corrections[wrong]
+            self._save_dynamic_corrections()
+            return True
+        return False
+
+    def clear_dynamic_corrections(self):
+        """清空所有动态纠错规则"""
+        self.dynamic_corrections.clear()
+        self._save_dynamic_corrections()
+
+    # ==================== 核心方法 ====================
 
     def compute_risk(self, audio: np.ndarray, sample_rate: int = 16000) -> Dict:
         timings = {}
@@ -297,9 +380,15 @@ class EnhancedASRRiskModel:
         }
 
     def _postprocess(self, text: str) -> str:
-        """后处理纠错 - 按词匹配 + 整条指令拼音纠错"""
+        """后处理纠错 - 按词匹配 + 整条指令拼音纠错 + 动态纠错"""
 
         print(f"\n🔧 [后处理-防御] 原始: '{text}'")
+
+        # ==================== 优先级1: 动态纠错规则（运行时学习） ====================
+        for wrong, correct in self.dynamic_corrections.items():
+            if wrong in text:
+                text = text.replace(wrong, correct)
+                print(f"   ✓ 动态纠错: '{wrong}' -> '{correct}'")
 
         # ==================== 1. 繁简转换 ====================
         text = zhconv.convert(text, 'zh-cn')
@@ -550,6 +639,13 @@ def test_model():
     )
 
     model = EnhancedASRRiskModel(config)
+
+    # 测试动态纠错
+    print("\n" + "=" * 70)
+    print("🧪 测试动态纠错功能")
+    print("=" * 70)
+    model.add_correction("测试错误", "测试正确")
+    print(f"动态纠错规则: {model.get_dynamic_corrections()}")
 
     try:
         audio, sr = librosa.load("test.wav", sr=16000, mono=True)
