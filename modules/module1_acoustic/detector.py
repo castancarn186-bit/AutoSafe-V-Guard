@@ -31,7 +31,7 @@ class AcousticDetector:
         # 参数配置
         self.expected_length = self.config.get('expected_length', 64600)
         self.fusion_weights = self.config.get('fusion_weights', {'la': 0.5, 'pa': 0.5})
-        self.thresholds = self.config.get('thresholds', {'PASS': 0.3, 'CONFIRM': 0.6})
+        self.thresholds = self.config.get('thresholds', {'PASS': 0.38, 'CONFIRM': 0.76})
 
     def setup(self):
         """加载模型并初始化预处理"""
