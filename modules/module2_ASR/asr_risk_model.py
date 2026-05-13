@@ -380,8 +380,7 @@ class EnhancedASRRiskModel:
         }
 
     def _postprocess(self, text: str) -> str:
-        """后处理纠错 - 按词匹配 + 整条指令拼音纠错 + 动态纠错"""
-
+        """后处理纠错 - 强化版：扩充词库、降低阈值、最终兜底"""
         print(f"\n🔧 [后处理-防御] 原始: '{text}'")
 
         # ==================== 优先级1: 动态纠错规则（运行时学习） ====================
@@ -398,7 +397,7 @@ class EnhancedASRRiskModel:
         text = re.sub(r'[，,。！？；：""''《》【】（）]', '', text)
         text = re.sub(r'\s+', '', text)
 
-        # ==================== 3. 动词纠错 ====================
+        # ==================== 3. 动词纠错（已扩展） ====================
         verb_corrections = {
             "把开": "打开", "我开": "打开", "玩开": "打开", "拨开": "打开", "大开": "打开",
             "关地": "关闭", "完毕": "关闭", "玩地": "关闭", "完畢": "关闭",
@@ -411,6 +410,17 @@ class EnhancedASRRiskModel:
             "导肮": "导航", "好行": "导航", "好航": "导航", "好像": "导航",
             "炸一": "下一", "一套": "一首",
             "海拳": "打开", "这么": "增大", "中大一秒": "增大音量",
+            # ★ 以下为新增映射
+            "要我第一": "调低", "找我第一": "调低", "让我第一": "调低",
+            "我们第一": "调低", "有第一": "调低",
+            "浪大": "增大", "深大": "增大", "噢大": "增大", "弄大": "增大",
+            "也效": "减小",
+            "我行": "导航", "老航": "导航",
+            "好开": "打开", "拿开": "打开", "咱开": "打开", "好 开": "打开",
+            "哇好": "播放",
+            "乱苹": "暂停", "按铃": "暂停", "但苹果": "暂停",
+            "完比": "关闭", "玩避": "关闭", "完避": "关闭",
+            "很避": "关闭", "反比": "关闭",
         }
 
         for wrong, correct in verb_corrections.items():
@@ -418,7 +428,7 @@ class EnhancedASRRiskModel:
                 text = text.replace(wrong, correct)
                 print(f"   ✓ 动词纠错: '{wrong}' -> '{correct}'")
 
-        # ==================== 4. 名词纠错 ====================
+        # ==================== 4. 名词纠错（已扩展） ====================
         noun_corrections = {
             "柱门": "车门", "车创": "车窗", "车双": "车窗", "车装": "车窗",
             "车吧": "车门", "车动": "车灯", "车们": "车门", "車動": "车灯",
@@ -427,7 +437,7 @@ class EnhancedASRRiskModel:
             "岛航": "导航", "到旁": "导航",
             "音了": "音乐", "大音乐": "音量",
             "音亮": "音量", "营亮": "音量", "一面": "音量",
-            "温渡": "温度", "寶寄溫固": "温度",
+            "温渡": "温度",
             "天创": "天窗", "车方": "车窗", "车撞": "车窗",
             "后车厢": "后备箱", "后箱": "后备箱",
             "雨刷": "雨刮", "吐吐": "车灯", "車燈": "车灯",
@@ -435,6 +445,16 @@ class EnhancedASRRiskModel:
             "冰冰痛": "车门", "王毕端": "车门", "海拳闷": "车门", "皮疙瘩": "车门",
             "一吋燈": "车灯", "一吋灯": "车灯",
             "航道北京": "导航到北京", "航到北京": "导航到北京", "封鴨": "空调",
+            # ★ 以下为新增映射
+            "课动": "车灯", "推动": "雾灯", "吹灯": "车灯",
+            "车床": "车窗", "开放": "导航", "靠命": "导航",
+            "通条": "空调", "空票": "空调", "公桥": "空调", "公条": "空调",
+            "燃养": "蓝牙",
+            "喷喷": "车门", "客门": "车门", "喝门": "车门", "扑门": "车门",
+            "魚面": "音量", "營料": "音量", "意味": "音量",
+            "一遍": "音乐", "一日": "音乐",
+            "锅放": "播放", "蘋果放": "播放", "波放": "播放",
+            "了呀": "蓝牙","停燕": "医院",
         }
 
         for wrong, correct in noun_corrections.items():
@@ -443,60 +463,127 @@ class EnhancedASRRiskModel:
                 print(f"   ✓ 名词纠错: '{wrong}' -> '{correct}'")
 
         # ==================== 5. 按词匹配（动词+名词组合） ====================
+        # 完整动词库
         verbs = [
+            # 基础操作类
             "打开", "关闭", "开启", "关掉", "合上", "收起", "展开", "升起", "降下",
+
+            # 调节类
             "调高", "调低", "增大", "减小", "增加", "减少", "提高", "降低", "调大", "调小",
+
+            # 媒体控制类
             "播放", "暂停", "停止", "继续", "开始", "停一下",
+            "切歌", "上一", "下一", "调到", "转到",
+
+            # 导航类
             "导航", "查找", "搜索", "规划", "定位", "查询",
-            "接听", "挂断", "拒绝", "拨号", "拨打",
+
+            # 电话类
+            "接听", "挂断", "拒绝", "拨号", "拨打", "重拨",
+
+            # 拍照/录像类
             "拍照", "录像", "保存", "录制",
+
+            # 设置类
             "切换", "设置", "调节", "调整", "解除", "禁用", "启用", "激活",
-            "上一", "下一", "调到", "转到", "切歌",
+
+            # 锁定类
             "锁", "解锁", "上锁",
+
+            # 吹风类
             "吹", "不要吹", "往上吹",
+
+            # 显示类
             "显示", "隐藏", "清除",
-            "启动", "停止", "取消", "退出",
+
+            # 启动/退出类
+            "启动", "停止", "取消", "退出", "结束",
+
+            # 连接类
+            "连接", "断开",
+
+            # 折叠/展开类
+            "折叠", "展开",
+
+            # 其他
+            "躲避", "查看", "更新", "吊销", "验证", "解密", "加密",
+            "发送", "接收", "执行", "同步", "记忆",
         ]
 
+        # 完整名词库
         nouns = [
-            # 车窗天窗
-            "车窗", "左前车窗", "右前车窗", "左后车窗", "右后车窗", "天窗", "遮阳板",
-            # 车门后备箱
-            "车门", "左前门", "右前门", "左后门", "右后门", "后备箱", "行李箱", "引擎盖", "前备箱",
-            # 车灯
-            "车灯", "近光灯", "远光灯", "雾灯", "示廓灯", "双闪", "日间行车灯", "氛围灯",
-            "顶灯", "阅读灯", "车内灯",
-            # 空调相关
-            "空调", "温度", "制冷", "制热", "内循环", "外循环", "前除雾", "后除雾", "风量",
-            "AC", "风扇", "挡风玻璃", "前挡", "后窗", "露营模式", "狗模式", "爱犬模式", "温度保持",
-            # 座椅
+            # ===== 车窗天窗 =====
+            "车窗", "左前车窗", "右前车窗", "左后车窗", "右后车窗",
+            "天窗", "遮阳板",
+
+            # ===== 车门后备箱 =====
+            "车门", "左前门", "右前门", "左后门", "右后门",
+            "后备箱", "行李箱", "引擎盖", "前备箱",
+
+            # ===== 车灯 =====
+            "车灯", "近光灯", "远光灯", "雾灯", "示廓灯", "双闪",
+            "日间行车灯", "氛围灯", "顶灯", "阅读灯", "车内灯",
+
+            # ===== 空调相关 =====
+            "空调", "温度", "制冷", "制热", "内循环", "外循环",
+            "前除雾", "后除雾", "前挡除雾", "后窗除雾", "前挡除霜",
+            "空调除雾", "风量", "AC", "A/C", "风扇",
+            "挡风玻璃", "前挡", "后窗",
+            "露营模式", "狗模式", "爱犬模式", "温度保持",
+            "自动空调", "空调自动模式", "温度同步",
+
+            # ===== 座椅 =====
             "座椅", "座椅加热", "座椅通风", "座椅按摩", "座椅位置",
+            "靠背",
+
+            # ===== 方向盘 =====
             "方向盘", "方向盘加热器",
-            # 后视镜
+
+            # ===== 后视镜 =====
             "后视镜", "左后视镜", "右后视镜", "反光镜", "侧视镜",
-            # 多媒体
+
+            # ===== 多媒体 =====
             "音乐", "收音机", "电台", "蓝牙", "歌词", "音量",
             "抖音", "腾讯视频", "优酷视频", "浏览器",
-            # 导航地图
-            "导航", "地图", "路线", "路况", "目的地", "交通图", "卫星图", "卫星视野",
+            "半生雪", "Handclap", "热爱105摄氏度的你", "奔赴星空",
+
+            # ===== 导航地图 =====
+            "导航", "地图", "路线", "路况", "目的地",
+            "交通图", "卫星图", "卫星视野", "交通视图", "卫星视图",
             "加油站", "充电站", "停车场", "地铁站", "医院",
-            "北京", "上海", "广州", "深圳", "成都", "陆家嘴", "东方明珠",
-            "特斯拉服务中心", "航海博物馆",
-            # 电话
+            "北京", "上海", "广州", "深圳", "成都",
+            "陆家嘴", "东方明珠", "特斯拉服务中心", "航海博物馆",
+            "家", "公司",
+
+            # ===== 电话 =====
             "电话", "通讯录", "联系人", "信息",
-            # 驾驶辅助
+            "免提", "听筒", "通话",
+
+            # ===== 驾驶辅助 =====
             "巡航", "车道保持", "自动泊车", "360影像", "悬架",
-            # 车辆设置
-            "驾驶模式", "能量回收", "ESP", "陡坡缓降", "胎压", "电量", "续航",
-            "屏幕亮度", "手套箱", "杂物箱",
-            # 雨刮
+            "ESP", "陡坡缓降",
+
+            # ===== 车辆设置 =====
+            "驾驶模式", "能量回收",
+            "胎压", "电量", "续航",
+            "屏幕亮度", "屏幕亮度自动模式",
+            "手套箱", "杂物箱",
+
+            # ===== 雨刮 =====
             "雨刮", "雨刷", "刮雨器",
-            # 充电
+
+            # ===== 充电 =====
             "充电口", "充电端口", "充电盖板",
-            # 行车记录仪
+
+            # ===== 行车记录仪 =====
             "行车记录仪", "行车记录", "短片", "哨兵模式",
-            # 其他
-            "车窗锁", "儿童锁", "顶灯",
+
+            # ===== 安全锁 =====
+            "车窗锁", "儿童锁", "车门锁",
+
+            # ===== 其他 =====
+            "运动", "经济", "舒适",  # 驾驶模式
+            "高", "中", "低",  # 能量回收
         ]
 
         verbs = list(set(verbs))
@@ -504,22 +591,17 @@ class EnhancedASRRiskModel:
         verbs.sort(key=len, reverse=True)
         nouns.sort(key=len, reverse=True)
 
-        # 记录已经匹配成功的词组，拼音纠错时跳过它们
-        matched_parts = []
-
         found_verb = None
         found_noun = None
 
         for v in verbs:
             if v in text:
                 found_verb = v
-                matched_parts.append(v)
                 break
 
         for n in nouns:
             if n in text:
                 found_noun = n
-                matched_parts.append(n)
                 break
 
         if found_verb and found_noun:
@@ -530,90 +612,57 @@ class EnhancedASRRiskModel:
             print(f"   ✓ 按词匹配: '{found_verb}' + '{found_noun}' -> '{result}'")
             text = result
 
-        # ==================== 6. 整条指令拼音纠错（跳过已匹配部分） ====================
+        # ==================== 6. 整条指令拼音纠错（降低阈值） ====================
         if self.config.enable_phonetic_correction and self.phonetic_corrector:
-            # 获取完整的指令列表（动词+名词组合和完整指令）
             all_commands = list(set(verbs + nouns + self.valid_commands))
             all_commands.sort(key=len, reverse=True)
 
-            # 检查是否已经匹配到完整指令
-            matched_full_command = False
+            # 先尝试整句匹配，阈值由 0.5 降为 0.45
+            best_match, similarity = self.phonetic_corrector.find_best_match(
+                text, all_commands, threshold=0.45
+            )
 
-            # 先尝试精确匹配完整指令
-            if text in self.valid_commands:
-                matched_full_command = True
-                print(f"   ✓ 已是完整指令: '{text}'")
-            else:
-                # 尝试最相似的整体匹配
-                best_match, similarity = self.phonetic_corrector.find_best_match(
-                    text, all_commands, threshold=0.5
-                )
-
-                if best_match and similarity >= 0.6:
-                    print(f"   ✓ 整条指令拼音匹配: '{text}' -> '{best_match}' (相似度: {similarity:.3f})")
+            if best_match and similarity >= 0.6:
+                print(f"   ✓ 整条指令拼音匹配(高): '{text}' -> '{best_match}' (相似度: {similarity:.3f})")
+                text = best_match
+            elif best_match and 0.45 <= similarity < 0.6:
+                # 低相似度但匹配到命令集内指令，采纳
+                if best_match in self.valid_commands:
+                    print(f"   ⚠️ 低相似度整句映射采纳: '{text}' -> '{best_match}' (sim={similarity:.3f})")
                     text = best_match
-                    matched_full_command = True
-                elif best_match and 0.5 <= similarity < 0.6:
-                    print(f"   ⚠️ 整条指令拼音相似度过低: '{text}' -> '{best_match}' (相似度: {similarity:.3f})")
-                    print(f"   → 保持原样: '{text}'")
                 else:
-                    print(f"   ✗ 未找到匹配的指令，保持原样: '{text}'")
-
-            # 如果整条指令没有匹配成功，尝试对未匹配的部分进行拼音纠错
-            if not matched_full_command:
-                # 提取未匹配的词组
+                    print(f"   ⚠️ 低相似度但非命令集指令，保持原样: '{text}'")
+            else:
+                # 未匹配到整句，尝试分词纠错（阈值 0.55）
                 words = re.findall(r'[\u4e00-\u9fa5]+', text)
                 corrected_words = []
-
                 for word in words:
-                    # 检查这个词是否已经被匹配过
-                    if word in matched_parts:
-                        print(f"   ⏭️ 跳过已匹配词: '{word}'")
-                        corrected_words.append(word)
-                        continue
-
-                    # 检查是否已经是正确的动词或名词
                     if word in verbs or word in nouns or word in self.valid_commands:
-                        print(f"   ✓ 已是正确词: '{word}'")
                         corrected_words.append(word)
-                        matched_parts.append(word)
                         continue
-
-                    # 在动词库中找最相似的
-                    best_match, sim = self.phonetic_corrector.find_best_match(word, verbs, threshold=0.5)
-                    if best_match and sim >= 0.6:
-                        print(f"   ✓ 拼音纠错(动词): '{word}' -> '{best_match}' (相似度: {sim:.3f})")
-                        corrected_words.append(best_match)
-                        continue
-
-                    # 在名词库中找最相似的
-                    best_match, sim = self.phonetic_corrector.find_best_match(word, nouns, threshold=0.5)
-                    if best_match and sim >= 0.6:
-                        print(f"   ✓ 拼音纠错(名词): '{word}' -> '{best_match}' (相似度: {sim:.3f})")
-                        corrected_words.append(best_match)
-                        continue
-
-                    # 在完整指令库中找最相似的
-                    best_match, sim = self.phonetic_corrector.find_best_match(word, self.valid_commands, threshold=0.5)
-                    if best_match and sim >= 0.6:
-                        print(f"   ✓ 拼音纠错(指令): '{word}' -> '{best_match}' (相似度: {sim:.3f})")
-                        corrected_words.append(best_match)
-                        continue
-
-                    # 相似度过低或未找到，保持原样
-                    if best_match and sim < 0.6:
-                        print(f"   ⚠️ 拼音相似度过低: '{word}' -> '{best_match}' (相似度: {sim:.3f})，保持原样")
+                    bm, sim = self.phonetic_corrector.find_best_match(
+                        word, verbs + nouns + self.valid_commands, threshold=0.55
+                    )
+                    if bm and sim >= 0.55:
+                        corrected_words.append(bm)
                     else:
-                        print(f"   ✗ 未找到匹配: '{word}'，保持原样")
-                    corrected_words.append(word)
-
+                        corrected_words.append(word)
                 text = ''.join(corrected_words)
 
-        # ==================== 7. 最终清理 ====================
+        # ==================== 7. 最终兜底：强制命令集映射 ====================
+        if text not in self.valid_commands and len(text) > 1:
+            # 最后一次拼音匹配，阈值极低，但结果必须在命令集中
+            final_match, final_sim = self.phonetic_corrector.find_best_match(
+                text, self.valid_commands, threshold=0.35
+            )
+            if final_match and final_sim >= 0.5:
+                print(f"   🔄 兜底强制映射: '{text}' -> '{final_match}' (sim={final_sim:.3f})")
+                text = final_match
+
+        # ==================== 8. 最终清理 ====================
         text = re.sub(r'[，,。！？；：""''《》【】（）]', '', text)
 
         print(f"   📝 最终结果: '{text}'")
-
         return text
 
     def cleanup(self):
