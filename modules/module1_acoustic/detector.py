@@ -94,14 +94,19 @@ class AcousticDetector:
         log_mel = torch.log(mel + self.log_offset)
         return log_mel.unsqueeze(0)   # (1,1,80,T)
 
-    def _predict_aasist(self, model, audio):
-        """返回模型预测的 spoof 概率（风险分数）"""
+    def _predict_aasist(self, model, audio, invert=False):
+        """
+        返回模型预测的 spoof 概率（风险分数）
+        invert: 如果为 True，则对 softmax 输出的概率取反（用于 LA 模型）
+        """
         if model is None:
             return 0.0
         input_tensor = self._preprocess_for_aasist(audio)
         with torch.no_grad():
             _, out = model(input_tensor)   # out shape: (1,2)
             prob = torch.softmax(out, dim=-1)[0, 1].item()
+            if invert:
+                prob = 1 - prob
         return prob
 
     def detect(self, audio):
@@ -113,8 +118,9 @@ class AcousticDetector:
             return {"risk_score": 0.0, "suggestion": "PASS", "reason": "No audio", "evidence": {}}
 
         try:
-            la_risk = self._predict_aasist(self.la_model, audio)
-            pa_risk = self._predict_aasist(self.pa_model, audio)
+            # LA 模型需要取反，PA 模型不需要
+            la_risk = self._predict_aasist(self.la_model, audio, invert=True)
+            pa_risk = self._predict_aasist(self.pa_model, audio, invert=False)
 
             # 加权融合
             final_risk = (self.fusion_weights.get('la', 0.0) * la_risk +
