@@ -120,7 +120,7 @@ class AcousticDetector:
         try:
             # LA 和 PA 模型都需要取反（因为训练时标签方向都是 bonafide=1, spoof=0）
             la_risk = self._predict_aasist(self.la_model, audio, invert=True)
-            pa_risk = self._predict_aasist(self.pa_model, audio, invert=True)
+            pa_risk = self._predict_aasist(self.pa_model, audio, invert=False)
 
             # 加权融合
             final_risk = (self.fusion_weights.get('la', 0.0) * la_risk +
