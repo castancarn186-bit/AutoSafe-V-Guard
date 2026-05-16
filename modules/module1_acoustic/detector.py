@@ -25,8 +25,8 @@ class AcousticDetector:
         # 模型路径（默认从本文件所在目录的 models/ 下加载）
         base_dir = os.path.dirname(os.path.abspath(__file__))
         models_dir = os.path.join(base_dir, 'models')
-        self.la_model_path = self.config.get('la_model_path', os.path.join(models_dir, 'aasist_la.pth'))
-        self.pa_model_path = self.config.get('pa_model_path', os.path.join(models_dir, 'aasist_pa.pth'))
+        self.la_model_path = self.config.get('la_model_path', os.path.join(models_dir, 'aasist_LA.pth'))
+        self.pa_model_path = self.config.get('pa_model_path', os.path.join(models_dir, 'aasist_PA.pth'))
 
         # 参数配置
         self.expected_length = self.config.get('expected_length', 64600)
